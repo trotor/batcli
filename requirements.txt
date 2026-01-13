@@ -1,0 +1,5 @@
+# BatCLI - No external dependencies
+# Uses only Python standard library:
+# - asyncio
+# - curses
+# - socket
