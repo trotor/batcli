@@ -17,7 +17,7 @@ import cmds
 # BatMUD palvelimen tiedot
 HOST = "bat.org"
 PORT = 23
-VERSION = "0.6.0"
+VERSION = "0.7.0"
 
 # Telnet protokolla konstantit
 IAC = 255   # Interpret As Command
@@ -163,6 +163,8 @@ class BatClient:
         self.env = load_env()
         self.username = self.env.get('BATMUD_USER', '')
         self.password = self.env.get('BATMUD_PASS', '')
+        self.auto_log = self.env.get('AUTO_LOG', '').lower() == 'true'
+        self.log_dir = self.env.get('LOG_DIR', '')
 
         # Curses asetukset
         curses.start_color()
@@ -403,6 +405,40 @@ class BatClient:
         except Exception as e:
             self.add_output(f"Yhteysvirhe: {e}\n")
             return False
+
+    def start_auto_log(self):
+        """Käynnistä automaattinen loggaus jos asetettu .env:ssä."""
+        if not self.auto_log:
+            return
+
+        from datetime import datetime
+        from pathlib import Path
+
+        # Määritä logs-kansio
+        if self.log_dir:
+            logs_dir = Path(self.log_dir)
+        else:
+            logs_dir = Path(__file__).resolve().parent / "logs"
+
+        logs_dir.mkdir(exist_ok=True)
+
+        # Luo tiedostonimi
+        timestamp = datetime.now().strftime("%Y%m%d%H%M")
+        log_path = logs_dir / f"{timestamp}.log"
+
+        try:
+            self.log_file = open(log_path, 'a', encoding='utf-8')
+            self.log_filename = str(log_path)
+
+            start_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            self.log_file.write(f"\n{'='*60}\n")
+            self.log_file.write(f"Automaattinen loggaus aloitettu: {start_time}\n")
+            self.log_file.write(f"{'='*60}\n\n")
+            self.log_file.flush()
+
+            self.add_output(f"*** Auto-log: {log_path.name} ***\n")
+        except Exception as e:
+            self.add_output(f"*** Auto-log virhe: {e} ***\n")
 
     async def auto_login(self):
         """Automaattinen kirjautuminen .env tiedoista"""
@@ -792,6 +828,9 @@ class BatClient:
                     break
                 await asyncio.sleep(0.1)
             return
+
+        # Aloita automaattinen loggaus jos määritelty
+        self.start_auto_log()
 
         # Käynnistä tehtävät
         read_task = asyncio.create_task(self.read_from_server())
