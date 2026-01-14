@@ -84,11 +84,14 @@ python3 batclient.py
 
 ### Komennot
 
+Kaikki `/`-alkuiset komennot käsitellään clientissa. Käytä `//` lähettääksesi `/` palvelimelle (esim. `//who` lähettää `/who`).
+
 | Komento | Toiminto |
 |---------|----------|
-| `/quit` | Poistu clientista |
+| `/help` | Näytä ohje |
 | `/debug on` | Ota debug-tila käyttöön (näyttää raakadatan palvelimelta) |
 | `/debug off` | Poista debug-tila käytöstä |
+| `/quit` | Poistu clientista |
 
 ## Tietoturvahuomautus
 

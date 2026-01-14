@@ -86,11 +86,14 @@ python3 batclient.py
 
 ### Commands
 
+All commands starting with `/` are handled by the client. Use `//` to send a literal `/` to the server (e.g., `//who` sends `/who`).
+
 | Command | Action |
 |---------|--------|
-| `/quit` | Exit the client |
+| `/help` | Show help |
 | `/debug on` | Enable debug mode (shows raw data from server) |
 | `/debug off` | Disable debug mode |
+| `/quit` | Exit the client |
 
 ## Security Note
 

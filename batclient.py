@@ -15,7 +15,7 @@ from pathlib import Path
 # BatMUD palvelimen tiedot
 HOST = "bat.org"
 PORT = 23
-VERSION = "0.2.0"
+VERSION = "0.3.0"
 
 # Telnet protokolla konstantit
 IAC = 255   # Interpret As Command
@@ -533,6 +533,60 @@ class BatClient:
 
         return bytes(result).decode('iso-8859-1', errors='replace'), prompt_detected
 
+    async def handle_client_command(self, cmd):
+        """Käsittele client-komento. Palauttaa False jos pitää lopettaa."""
+        cmd_lower = cmd.lower()
+        args = cmd.split(maxsplit=1)
+        cmd_name = args[0].lower()
+
+        if cmd_lower == '/quit':
+            self.add_output("*** Suljetaan client... ***\n")
+            self.running = False
+            return False
+
+        elif cmd_lower == '/help':
+            self.show_help()
+
+        elif cmd_lower == '/debug on':
+            self.debug_mode = True
+            self.add_output("*** Debug-tila ON ***\n")
+            self.refresh_status()
+
+        elif cmd_lower == '/debug off':
+            self.debug_mode = False
+            self.add_output("*** Debug-tila OFF ***\n")
+            self.refresh_status()
+
+        else:
+            self.add_output(f"*** Tuntematon komento: {cmd_name} - kirjoita /help ***\n")
+
+        self.refresh_output()
+        return True
+
+    def show_help(self):
+        """Näytä ohje client-komennoista"""
+        help_text = """
+*** Dino's mini Batmud Client - Ohjeet ***
+
+CLIENT-KOMENNOT (alkavat /):
+  /help         - Näytä tämä ohje
+  /debug on     - Ota debug-tila käyttöön
+  /debug off    - Poista debug-tila käytöstä
+  /quit         - Sulje client
+
+HUOM: // lähettää yhden / palvelimelle (esim. //who -> /who)
+
+PIKANÄPPÄIMET:
+  Ctrl-P/N      - Komentohistoria eteen/taakse
+  Ctrl-A/E      - Rivin alku/loppu
+  Ctrl-U        - Tyhjennä rivi
+  Ctrl-K        - Poista kursorista loppuun
+  Page Up/Down  - Vieritä historiaa
+  Home/End      - Vieritä alkuun/loppuun
+
+"""
+        self.add_output(help_text)
+
     async def send_command(self, cmd):
         """Lähetä komento palvelimelle"""
         if self.writer:
@@ -575,23 +629,19 @@ class BatClient:
                         self.refresh_input()
 
                     elif keycode in (curses.KEY_ENTER, 10, 13):  # Enter
-                        cmd_lower = self.input_buffer.strip().lower()
-                        if cmd_lower == '/quit':
-                            self.add_output("\n*** Suljetaan client... ***\n")
-                            self.running = False
-                            break
-                        elif cmd_lower == '/debug on':
-                            self.debug_mode = True
-                            self.add_output("*** Debug-tila ON ***\n")
-                            self.refresh_output()
-                            self.refresh_status()
-                        elif cmd_lower == '/debug off':
-                            self.debug_mode = False
-                            self.add_output("*** Debug-tila OFF ***\n")
-                            self.refresh_output()
-                            self.refresh_status()
+                        cmd = self.input_buffer.strip()
+
+                        if cmd.startswith('//'):
+                            # // -> lähetä palvelimelle yhdellä /
+                            await self.send_command(cmd[1:])
+                        elif cmd.startswith('/'):
+                            # Client-komento
+                            if not await self.handle_client_command(cmd):
+                                break  # /quit
                         else:
+                            # Tavallinen komento palvelimelle
                             await self.send_command(self.input_buffer)
+
                         self.input_buffer = ""
                         self.cursor_pos = 0
                         self.scroll_offset = 0
