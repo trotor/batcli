@@ -17,7 +17,7 @@ import cmds
 # BatMUD palvelimen tiedot
 HOST = "bat.org"
 PORT = 23
-VERSION = "0.5.0"
+VERSION = "0.6.0"
 
 # Telnet protokolla konstantit
 IAC = 255   # Interpret As Command
@@ -155,6 +155,9 @@ class BatClient:
         self.partial_line = ""  # Keskeneräinen rivi (ei vielä \n tai IAC GA/EOR)
         self.debug_mode = False  # Debug-tila näyttää raakadatan
         self.version = VERSION  # Versio helppiä varten
+        self.log_file = None  # Lokitiedosto (avattu file handle)
+        self.log_filename = None  # Lokitiedoston polku
+        self.user_aliases = {}  # Käyttäjän aliakset {nimi: komento}
 
         # Lataa .env asetukset
         self.env = load_env()
@@ -260,6 +263,15 @@ class BatClient:
         """Lisää tekstiä output-ikkunaan"""
         # Poista CR (telnet käyttää CR+LF, meille riittää LF)
         text = text.replace('\r', '')
+
+        # Kirjoita lokiin (ilman ANSI-koodeja)
+        if self.log_file:
+            try:
+                clean_text = self.strip_ansi(text)
+                self.log_file.write(clean_text)
+                self.log_file.flush()
+            except Exception:
+                pass  # Älä kaada ohjelmaa loggausvirheeseen
 
         # Käsittele rivinvaihdot
         lines = text.split('\n')
@@ -588,6 +600,24 @@ class BatClient:
             except Exception as e:
                 self.add_output(f"\nLähetysvirhe: {e}\n")
 
+    def expand_alias(self, cmd):
+        """Laajenna alias jos löytyy."""
+        if not cmd or not self.user_aliases:
+            return cmd
+
+        # Tarkista onko ensimmäinen sana alias
+        parts = cmd.split(maxsplit=1)
+        first_word = parts[0]
+
+        if first_word in self.user_aliases:
+            alias_cmd = self.user_aliases[first_word]
+            # Jos oli argumentteja, lisää ne aliaksen perään
+            if len(parts) > 1:
+                return f"{alias_cmd} {parts[1]}"
+            return alias_cmd
+
+        return cmd
+
     async def handle_input(self):
         """Käsittele käyttäjän syöte"""
         try:
@@ -626,8 +656,9 @@ class BatClient:
                             if not await self.handle_client_command(cmd):
                                 break  # /quit
                         else:
-                            # Tavallinen komento palvelimelle
-                            await self.send_command(self.input_buffer)
+                            # Tarkista alias ja lähetä palvelimelle
+                            expanded = self.expand_alias(cmd)
+                            await self.send_command(expanded)
 
                         self.input_buffer = ""
                         self.cursor_pos = 0
