@@ -17,7 +17,7 @@ import cmds
 # BatMUD palvelimen tiedot
 HOST = "bat.org"
 PORT = 23
-VERSION = "0.4.0"
+VERSION = "0.5.0"
 
 # Telnet protokolla konstantit
 IAC = 255   # Interpret As Command
@@ -562,10 +562,10 @@ class BatClient:
                 self.add_output("*** Käyttö: /debug on | /debug off ***\n")
 
         else:
-            # Etsi komento moduuleista
-            command = cmds.get_command(cmd_name)
+            # Etsi komento moduuleista ja luo instanssi
+            command = cmds.create_command(cmd_name, self)
             if command:
-                result = await command.execute(self, args)
+                result = await command.execute(args)
                 if result is False:
                     return False
             else:
