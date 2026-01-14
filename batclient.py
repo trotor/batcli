@@ -15,11 +15,93 @@ from pathlib import Path
 # BatMUD palvelimen tiedot
 HOST = "bat.org"
 PORT = 23
+VERSION = "0.2.0"
+
+# Telnet protokolla konstantit
+IAC = 255   # Interpret As Command
+GA = 249    # Go Ahead (prompt marker)
+EOR = 239   # End Of Record (prompt marker)
+SB = 250    # Subnegotiation Begin
+SE = 240    # Subnegotiation End
+WILL = 251
+WONT = 252
+DO = 253
+DONT = 254
+TELOPT_EOR = 25  # End of Record option
+
+
+# Telnet-komentojen nimet debug-tulostukseen
+TELNET_NAMES = {
+    255: 'IAC', 254: 'DONT', 253: 'DO', 252: 'WONT', 251: 'WILL',
+    250: 'SB', 249: 'GA', 248: 'EL', 247: 'EC', 246: 'AYT',
+    245: 'AO', 244: 'IP', 243: 'BRK', 242: 'DM', 241: 'NOP',
+    240: 'SE', 239: 'EOR',
+}
+
+TELOPT_NAMES = {
+    0: 'BINARY', 1: 'ECHO', 3: 'SGA', 24: 'TTYPE', 25: 'EOR',
+    31: 'NAWS', 32: 'TSPEED', 33: 'RFLOW', 34: 'LINEMODE',
+    39: 'NEWENV', 85: 'COMPRESS', 86: 'COMPRESS2', 201: 'GMCP',
+}
+
+
+def format_debug_bytes(data):
+    """Muotoile raakadata luettavaan muotoon erikoismerkeillä"""
+    result = []
+    i = 0
+    data_list = list(data)
+
+    while i < len(data_list):
+        b = data_list[i]
+
+        if b == IAC and i + 1 < len(data_list):
+            next_b = data_list[i + 1]
+
+            if next_b in TELNET_NAMES:
+                cmd_name = TELNET_NAMES[next_b]
+
+                # Jos on WILL/WONT/DO/DONT, näytä myös optio
+                if next_b in (WILL, WONT, DO, DONT) and i + 2 < len(data_list):
+                    opt = data_list[i + 2]
+                    opt_name = TELOPT_NAMES.get(opt, str(opt))
+                    result.append(f"[IAC {cmd_name} {opt_name}]")
+                    i += 3
+                else:
+                    result.append(f"[IAC {cmd_name}]")
+                    i += 2
+            else:
+                result.append(f"[IAC {next_b}]")
+                i += 2
+        elif b == 27:  # ESC
+            result.append("[ESC]")
+            i += 1
+        elif b == 10:
+            result.append("[LF]")
+            i += 1
+        elif b == 13:
+            result.append("[CR]")
+            i += 1
+        elif b == 8:
+            result.append("[BS]")
+            i += 1
+        elif b < 32 or b == 127:
+            result.append(f"[{b}]")
+            i += 1
+        else:
+            # Tavallinen merkki
+            try:
+                result.append(chr(b))
+            except:
+                result.append(f"[{b}]")
+            i += 1
+
+    return "".join(result)
 
 
 def load_env():
     """Lataa .env tiedosto"""
-    env_path = Path(__file__).parent / ".env"
+    # resolve() seuraa symlinkit todelliseen sijaintiin
+    env_path = Path(__file__).resolve().parent / ".env"
     env_vars = {}
 
     if env_path.exists():
@@ -67,6 +149,9 @@ class BatClient:
         self.writer = None
         self.command_history = deque(maxlen=100)
         self.history_index = -1
+        self.mud_prompt = ""  # MUD:n lähettämä prompt (IAC GA/EOR jälkeen)
+        self.partial_line = ""  # Keskeneräinen rivi (ei vielä \n tai IAC GA/EOR)
+        self.debug_mode = False  # Debug-tila näyttää raakadatan
 
         # Lataa .env asetukset
         self.env = load_env()
@@ -84,7 +169,7 @@ class BatClient:
         # Lisää väriparit kirkkailla väreillä
         curses.init_pair(16, curses.COLOR_WHITE, curses.COLOR_BLUE)  # Status bar
 
-        self.stdscr.nodelay(True)
+        curses.halfdelay(1)  # Palauta get_wch():stä 100ms jälkeen
         self.stdscr.keypad(True)
         curses.curs_set(1)
 
@@ -106,7 +191,6 @@ class BatClient:
         # Input-ikkuna (viimeinen rivi)
         self.input_win = curses.newwin(1, self.width, self.height - 1, 0)
         self.input_win.keypad(True)
-        self.input_win.nodelay(True)
 
     def parse_ansi(self, text):
         """Parsii ANSI-koodit ja palauttaa listan (teksti, attribuutit) pareja"""
@@ -171,10 +255,18 @@ class BatClient:
 
     def add_output(self, text):
         """Lisää tekstiä output-ikkunaan"""
+        # Poista CR (telnet käyttää CR+LF, meille riittää LF)
+        text = text.replace('\r', '')
+
         # Käsittele rivinvaihdot
         lines = text.split('\n')
+
+        # Jos teksti päättyi \n, viimeinen elementti on tyhjä - älä lisää sitä
+        if lines and lines[-1] == '':
+            lines = lines[:-1]
+
         for line in lines:
-            # Poista muut kontrollimerkit paitsi ANSI
+            # Poista muut kontrollimerkit paitsi ANSI (ESC)
             clean_line = re.sub(r'[\x00-\x08\x0b\x0c\x0e-\x1a\x1c-\x1f]', '', line)
             self.output_lines.append(clean_line)
 
@@ -213,29 +305,59 @@ class BatClient:
             except curses.error:
                 pass
 
-        self.output_win.refresh()
+        self.output_win.noutrefresh()
 
     def refresh_status(self):
         """Päivitä status bar"""
         self.status_win.erase()
-        status = f" BatMUD Client | {HOST}:{PORT} | Lines: {len(self.output_lines)}"
+        status = f" Dino's mini Batmud Client {VERSION} | {HOST}:{PORT}"
+        if self.debug_mode:
+            status += " | [DEBUG]"
         if self.scroll_offset > 0:
             status += f" | Scroll: -{self.scroll_offset}"
         try:
             self.status_win.addstr(0, 0, status[:self.width-1], curses.color_pair(16) | curses.A_BOLD)
         except curses.error:
             pass
-        self.status_win.refresh()
+        self.status_win.noutrefresh()
+
+    def strip_ansi(self, text):
+        """Poista ANSI-koodit tekstistä"""
+        return re.sub(r'\x1b\[[0-9;]*m', '', text)
+
+    def get_prompt_display_length(self):
+        """Laske promptin näyttöpituus (ilman ANSI-koodeja)"""
+        return len(self.strip_ansi(self.mud_prompt))
 
     def refresh_input(self):
-        """Päivitä input-ikkuna"""
+        """Päivitä input-ikkuna MUD-promptilla"""
         self.input_win.erase()
-        prompt = "> "
-        available_width = self.width - len(prompt) - 1
+
+        # Käytä MUD:n promptia jos se on asetettu, muuten "> "
+        if self.mud_prompt:
+            # Näytä prompt väreineen
+            prompt_col = 0
+            parsed = self.parse_ansi(self.mud_prompt)
+            for text, attr in parsed:
+                try:
+                    max_len = self.width - prompt_col - 1
+                    text = text[:max_len]
+                    self.input_win.addstr(0, prompt_col, text, attr)
+                    prompt_col += len(text)
+                except curses.error:
+                    pass
+            prompt_len = prompt_col
+        else:
+            prompt = "> "
+            try:
+                self.input_win.addstr(0, 0, prompt)
+            except curses.error:
+                pass
+            prompt_len = len(prompt)
+
+        available_width = self.width - prompt_len - 1
 
         try:
-            self.input_win.addstr(0, 0, prompt)
-
             # Laske mikä osa bufferista näytetään
             # Varmista että kursori on aina näkyvissä
             if self.cursor_pos < available_width:
@@ -249,10 +371,11 @@ class BatClient:
                 visible_input = self.input_buffer[start:start + available_width]
                 cursor_screen_pos = available_width - 1
 
-            self.input_win.addstr(0, len(prompt), visible_input)
-            self.input_win.move(0, len(prompt) + cursor_screen_pos)
+            self.input_win.addstr(0, prompt_len, visible_input)
+            self.input_win.move(0, prompt_len + cursor_screen_pos)
         except curses.error:
             pass
+        self.input_win.touchwin()  # Merkitse ikkuna muuttuneeksi
         self.input_win.refresh()
 
     async def connect(self):
@@ -293,14 +416,48 @@ class BatClient:
                         self.running = False
                         break
 
-                    # Dekoodaa ISO-8859-1 (BatMUD käyttää tätä)
-                    text = data.decode('iso-8859-1', errors='replace')
+                    # Debug: näytä raakadata luettavassa muodossa
+                    if self.debug_mode:
+                        debug_str = format_debug_bytes(data)
+                        self.add_output(f"[DEBUG] {debug_str}\n")
 
                     # Käsittele telnet-komennot (IAC)
-                    text = self.handle_telnet(text, data)
+                    text, prompt_detected = self.handle_telnet("", data)
 
-                    self.add_output(text)
+                    # Debug: näytä prompt-tila
+                    if self.debug_mode and prompt_detected:
+                        self.add_output(f"[DEBUG] >>> PROMPT DETECTED <<<\n")
+
+                    # Yhdistä edellinen keskeneräinen rivi
+                    text = self.partial_line + text
+                    self.partial_line = ""
+
+                    if prompt_detected:
+                        # Etsi viimeinen rivinvaihto - sen jälkeinen teksti on prompt
+                        last_newline = text.rfind('\n')
+                        if last_newline >= 0:
+                            # Tulosta kaikki ennen promptia
+                            self.add_output(text[:last_newline + 1])
+                            # Tallenna prompt
+                            self.mud_prompt = text[last_newline + 1:]
+                        else:
+                            # Ei rivinvaihtoja - koko teksti on prompt
+                            self.mud_prompt = text
+                        self.refresh_input()
+                    else:
+                        # Tarkista onko keskeneräinen rivi (ei pääty \n)
+                        if text and not text.endswith('\n'):
+                            last_newline = text.rfind('\n')
+                            if last_newline >= 0:
+                                self.add_output(text[:last_newline + 1])
+                                self.partial_line = text[last_newline + 1:]
+                            else:
+                                self.partial_line = text
+                        else:
+                            self.add_output(text)
+
                     self.refresh_status()
+                    curses.doupdate()
 
                 except asyncio.TimeoutError:
                     pass
@@ -311,40 +468,70 @@ class BatClient:
             pass
 
     def handle_telnet(self, text, raw_data):
-        """Käsittele telnet-protokollan komennot"""
-        # Yksinkertainen IAC-käsittely
-        # IAC = 255, WILL = 251, WONT = 252, DO = 253, DONT = 254
+        """Käsittele telnet-protokollan komennot ja tunnista promptit"""
         result = []
+        prompt_detected = False
         i = 0
         data = list(raw_data)
 
         while i < len(data):
-            if data[i] == 255 and i + 1 < len(data):  # IAC
-                if data[i + 1] == 255:  # Escaped IAC
-                    result.append(255)
+            if data[i] == IAC and i + 1 < len(data):
+                next_byte = data[i + 1]
+
+                if next_byte == IAC:  # Escaped IAC
+                    result.append(IAC)
                     i += 2
-                elif data[i + 1] in (251, 252, 253, 254) and i + 2 < len(data):
-                    # WILL/WONT/DO/DONT - vastaa WONT/DONT
-                    cmd = data[i + 1]
+
+                elif next_byte == GA:  # Go Ahead - prompt marker
+                    prompt_detected = True
+                    i += 2
+
+                elif next_byte == EOR:  # End of Record - prompt marker
+                    prompt_detected = True
+                    i += 2
+
+                elif next_byte in (WILL, WONT, DO, DONT) and i + 2 < len(data):
+                    cmd = next_byte
                     opt = data[i + 2]
 
-                    if cmd == 253:  # DO -> vastaa WONT
-                        response = bytes([255, 252, opt])
+                    if cmd == DO:
+                        if opt == TELOPT_EOR:
+                            # Hyväksy EOR - vastaa WILL
+                            response = bytes([IAC, WILL, TELOPT_EOR])
+                        else:
+                            # Muut - vastaa WONT
+                            response = bytes([IAC, WONT, opt])
                         if self.writer:
                             self.writer.write(response)
-                    elif cmd == 251:  # WILL -> vastaa DONT
-                        response = bytes([255, 254, opt])
+
+                    elif cmd == WILL:
+                        if opt == TELOPT_EOR:
+                            # Hyväksy EOR - vastaa DO
+                            response = bytes([IAC, DO, TELOPT_EOR])
+                        else:
+                            # Muut - vastaa DONT
+                            response = bytes([IAC, DONT, opt])
                         if self.writer:
                             self.writer.write(response)
 
                     i += 3
+
+                elif next_byte == SB:  # Subnegotiation - ohita
+                    # Etsi SE
+                    j = i + 2
+                    while j < len(data) - 1:
+                        if data[j] == IAC and data[j + 1] == SE:
+                            break
+                        j += 1
+                    i = j + 2
+
                 else:
                     i += 2
             else:
                 result.append(data[i])
                 i += 1
 
-        return bytes(result).decode('iso-8859-1', errors='replace')
+        return bytes(result).decode('iso-8859-1', errors='replace'), prompt_detected
 
     async def send_command(self, cmd):
         """Lähetä komento palvelimelle"""
@@ -369,7 +556,8 @@ class BatClient:
                     try:
                         key = self.input_win.get_wch()
                     except curses.error:
-                        await asyncio.sleep(0.01)
+                        # halfdelay timeout - anna muille tehtäville aikaa
+                        await asyncio.sleep(0)
                         continue
 
                     # get_wch palauttaa joko int (erikoisnäppäin) tai str (merkki)
@@ -387,11 +575,23 @@ class BatClient:
                         self.refresh_input()
 
                     elif keycode in (curses.KEY_ENTER, 10, 13):  # Enter
-                        if self.input_buffer.strip().lower() == '/quit':
+                        cmd_lower = self.input_buffer.strip().lower()
+                        if cmd_lower == '/quit':
                             self.add_output("\n*** Suljetaan client... ***\n")
                             self.running = False
                             break
-                        await self.send_command(self.input_buffer)
+                        elif cmd_lower == '/debug on':
+                            self.debug_mode = True
+                            self.add_output("*** Debug-tila ON ***\n")
+                            self.refresh_output()
+                            self.refresh_status()
+                        elif cmd_lower == '/debug off':
+                            self.debug_mode = False
+                            self.add_output("*** Debug-tila OFF ***\n")
+                            self.refresh_output()
+                            self.refresh_status()
+                        else:
+                            await self.send_command(self.input_buffer)
                         self.input_buffer = ""
                         self.cursor_pos = 0
                         self.scroll_offset = 0
