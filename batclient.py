@@ -17,7 +17,7 @@ import cmds
 # BatMUD palvelimen tiedot
 HOST = "bat.org"
 PORT = 23
-VERSION = "0.7.0"
+VERSION = "0.7.1"
 
 # Telnet protokolla konstantit
 IAC = 255   # Interpret As Command
@@ -112,6 +112,9 @@ def load_env():
                 line = line.strip()
                 if line and not line.startswith('#') and '=' in line:
                     key, _, value = line.partition('=')
+                    # Poista inline-kommentit (# ja sen jälkeen)
+                    if '#' in value:
+                        value = value.split('#')[0]
                     # Poista mahdolliset lainausmerkit
                     value = value.strip().strip('"').strip("'")
                     env_vars[key.strip()] = value
@@ -436,7 +439,7 @@ class BatClient:
             self.log_file.write(f"{'='*60}\n\n")
             self.log_file.flush()
 
-            self.add_output(f"*** Auto-log: {log_path.name} ***\n")
+            self.add_output(f"*** Auto-log: {log_path} ***\n")
         except Exception as e:
             self.add_output(f"*** Auto-log virhe: {e} ***\n")
 
