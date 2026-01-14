@@ -12,10 +12,12 @@ import os
 from collections import deque
 from pathlib import Path
 
+import cmds
+
 # BatMUD palvelimen tiedot
 HOST = "bat.org"
 PORT = 23
-VERSION = "0.3.0"
+VERSION = "0.4.0"
 
 # Telnet protokolla konstantit
 IAC = 255   # Interpret As Command
@@ -152,6 +154,7 @@ class BatClient:
         self.mud_prompt = ""  # MUD:n lähettämä prompt (IAC GA/EOR jälkeen)
         self.partial_line = ""  # Keskeneräinen rivi (ei vielä \n tai IAC GA/EOR)
         self.debug_mode = False  # Debug-tila näyttää raakadatan
+        self.version = VERSION  # Versio helppiä varten
 
         # Lataa .env asetukset
         self.env = load_env()
@@ -535,57 +538,41 @@ class BatClient:
 
     async def handle_client_command(self, cmd):
         """Käsittele client-komento. Palauttaa False jos pitää lopettaa."""
-        cmd_lower = cmd.lower()
-        args = cmd.split(maxsplit=1)
-        cmd_name = args[0].lower()
+        parts = cmd.split(maxsplit=1)
+        cmd_name = parts[0][1:].lower()  # Poista / alusta
+        args = parts[1] if len(parts) > 1 else ""
 
-        if cmd_lower == '/quit':
+        # Sisäänrakennetut komennot (quit, debug)
+        if cmd_name == 'quit':
             self.add_output("*** Suljetaan client... ***\n")
             self.running = False
             return False
 
-        elif cmd_lower == '/help':
-            self.show_help()
-
-        elif cmd_lower == '/debug on':
-            self.debug_mode = True
-            self.add_output("*** Debug-tila ON ***\n")
-            self.refresh_status()
-
-        elif cmd_lower == '/debug off':
-            self.debug_mode = False
-            self.add_output("*** Debug-tila OFF ***\n")
-            self.refresh_status()
+        elif cmd_name == 'debug':
+            args_lower = args.lower()
+            if args_lower == 'on':
+                self.debug_mode = True
+                self.add_output("*** Debug-tila ON ***\n")
+                self.refresh_status()
+            elif args_lower == 'off':
+                self.debug_mode = False
+                self.add_output("*** Debug-tila OFF ***\n")
+                self.refresh_status()
+            else:
+                self.add_output("*** Käyttö: /debug on | /debug off ***\n")
 
         else:
-            self.add_output(f"*** Tuntematon komento: {cmd_name} - kirjoita /help ***\n")
+            # Etsi komento moduuleista
+            command = cmds.get_command(cmd_name)
+            if command:
+                result = await command.execute(self, args)
+                if result is False:
+                    return False
+            else:
+                self.add_output(f"*** Tuntematon komento: /{cmd_name} - kirjoita /help ***\n")
 
         self.refresh_output()
         return True
-
-    def show_help(self):
-        """Näytä ohje client-komennoista"""
-        help_text = """
-*** Dino's mini Batmud Client - Ohjeet ***
-
-CLIENT-KOMENNOT (alkavat /):
-  /help         - Näytä tämä ohje
-  /debug on     - Ota debug-tila käyttöön
-  /debug off    - Poista debug-tila käytöstä
-  /quit         - Sulje client
-
-HUOM: // lähettää yhden / palvelimelle (esim. //who -> /who)
-
-PIKANÄPPÄIMET:
-  Ctrl-P/N      - Komentohistoria eteen/taakse
-  Ctrl-A/E      - Rivin alku/loppu
-  Ctrl-U        - Tyhjennä rivi
-  Ctrl-K        - Poista kursorista loppuun
-  Page Up/Down  - Vieritä historiaa
-  Home/End      - Vieritä alkuun/loppuun
-
-"""
-        self.add_output(help_text)
 
     async def send_command(self, cmd):
         """Lähetä komento palvelimelle"""
