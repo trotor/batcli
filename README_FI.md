@@ -2,6 +2,8 @@
 
 Yksinkertainen terminaalipohjainen MUD-client [BatMUD](https://www.bat.org)-peliin (bat.org:23).
 
+![BatCLI kuvakaappaus](assets/screenshot.png)
+
 ## Ominaisuudet
 
 - Telnet-yhteys BatMUD:iin

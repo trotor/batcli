@@ -4,6 +4,8 @@ A simple terminal-based MUD client for [BatMUD](https://www.bat.org) (bat.org:23
 
 > :finland: [Lue ohjeet suomeksi](README_FI.md)
 
+![BatCLI screenshot](assets/screenshot.png)
+
 ## Features
 
 - Telnet connection to BatMUD
