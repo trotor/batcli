@@ -16,6 +16,9 @@ A simple terminal-based MUD client for [BatMUD](https://www.bat.org) (bat.org:23
 - Auto-login from .env file
 - **Prompt hold**: MUD prompt (IAC GA/EOR) displayed on input line
 - **Debug mode**: View raw telnet data with `/debug on`
+- **Session logging**: Save sessions to file with `/log`
+- **Auto-logging**: Automatically start logging on connect via .env
+- **User aliases**: Create shortcuts for commands with `/alias`
 
 ## Requirements
 
@@ -57,6 +60,15 @@ cp .env_sample .env
 # Edit .env with your credentials
 ```
 
+### Optional: Auto-logging
+
+Enable automatic session logging by adding to your `.env`:
+
+```bash
+AUTO_LOG=true
+LOG_DIR=/path/to/logs  # Optional, defaults to logs/
+```
+
 ## Usage
 
 ```bash
@@ -91,8 +103,11 @@ All commands starting with `/` are handled by the client. Use `//` to send a lit
 | Command | Action |
 |---------|--------|
 | `/help` | Show help |
-| `/debug on` | Enable debug mode (shows raw data from server) |
-| `/debug off` | Disable debug mode |
+| `/clear` | Clear the screen |
+| `/log [on\|off]` | Start/stop session logging |
+| `/alias [name] [cmd]` | Create or list aliases |
+| `/alias -d <name>` | Delete an alias |
+| `/debug on\|off` | Toggle debug mode |
 | `/quit` | Exit the client |
 
 ## Security Note

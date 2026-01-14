@@ -18,8 +18,13 @@ Päivitä VERSION-muuttuja ennen commitia.
   - `__init__.py` - Komentojen latausmekanismi
   - `base.py` - Command base-luokka
   - `help.py` - /help komento
-- `.env` - Käyttäjän tunnukset (ei versionhallinnassa)
+  - `clear.py` - /clear komento
+  - `log.py` - /log komento (sessioiden tallennus)
+  - `alias.py` - /alias komento (pikakomennot)
+- `.env` - Käyttäjän asetukset ja tunnukset (ei versionhallinnassa)
 - `.env_sample` - Esimerkki .env-tiedostosta
+- `logs/` - Sessiolokit (ei versionhallinnassa)
+- `TODO.md` - Kehitysideat ja toiveet
 
 ## Uuden komennon lisääminen
 

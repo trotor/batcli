@@ -14,6 +14,9 @@ Yksinkertainen terminaalipohjainen MUD-client [BatMUD](https://www.bat.org)-peli
 - Automaattinen kirjautuminen .env-tiedostosta
 - **Prompt hold**: MUD:n prompt (IAC GA/EOR) näkyy syöttörivillä
 - **Debug-tila**: Näytä raaka telnet-data komennolla `/debug on`
+- **Sessioiden tallennus**: Tallenna sessiot tiedostoon `/log`-komennolla
+- **Automaattinen loggaus**: Aloita loggaus automaattisesti .env:stä
+- **Käyttäjäaliakset**: Luo pikakomentoja `/alias`-komennolla
 
 ## Vaatimukset
 
@@ -55,6 +58,15 @@ cp .env_sample .env
 # Muokkaa .env-tiedostoon omat tunnuksesi
 ```
 
+### Valinnainen: Automaattinen loggaus
+
+Ota automaattinen sessioiden tallennus käyttöön lisäämällä `.env`-tiedostoon:
+
+```bash
+AUTO_LOG=true
+LOG_DIR=/polku/logeihin  # Valinnainen, oletus: logs/
+```
+
 ## Käyttö
 
 ```bash
@@ -89,8 +101,11 @@ Kaikki `/`-alkuiset komennot käsitellään clientissa. Käytä `//` lähettää
 | Komento | Toiminto |
 |---------|----------|
 | `/help` | Näytä ohje |
-| `/debug on` | Ota debug-tila käyttöön (näyttää raakadatan palvelimelta) |
-| `/debug off` | Poista debug-tila käytöstä |
+| `/clear` | Tyhjennä näyttö |
+| `/log [on\|off]` | Aloita/lopeta sessioiden tallennus |
+| `/alias [nimi] [cmd]` | Luo tai listaa aliakset |
+| `/alias -d <nimi>` | Poista alias |
+| `/debug on\|off` | Debug-tilan vaihto |
 | `/quit` | Poistu clientista |
 
 ## Tietoturvahuomautus
