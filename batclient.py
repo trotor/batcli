@@ -17,7 +17,7 @@ import cmds
 # BatMUD palvelimen tiedot
 HOST = "bat.org"
 PORT = 23
-VERSION = "0.8.3"
+VERSION = "0.8.4"
 
 # Telnet protokolla konstantit
 IAC = 255   # Interpret As Command
@@ -335,9 +335,9 @@ class BatClient:
         self.status_win.erase()
         status = f" BatCLI {VERSION} | {HOST}:{PORT}"
         if self.log_file:
-            status += " | 📝"
+            status += " | REC●"
         if self.debug_mode:
-            status += " | 🐛"
+            status += " | DBG"
         if self.scroll_offset > 0:
             status += f" | ↑{self.scroll_offset}"
         try:
