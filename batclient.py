@@ -17,7 +17,7 @@ import cmds
 # BatMUD palvelimen tiedot
 HOST = "bat.org"
 PORT = 23
-VERSION = "0.8.0"
+VERSION = "0.8.1"
 
 # Telnet protokolla konstantit
 IAC = 255   # Interpret As Command
@@ -406,7 +406,7 @@ class BatClient:
 
     async def connect(self):
         """Yhdistä BatMUD-palvelimeen"""
-        self.add_output(f"Yhdistetään palvelimeen {HOST}:{PORT}... (timeout 10s)\n")
+        self.add_output(f"*** Yhdistetään palvelimeen {HOST}:{PORT}... ***\n")
         curses.doupdate()  # Päivitä näyttö heti
         try:
             # Yhteyden muodostus timeoutilla (10 sekuntia)
@@ -414,7 +414,7 @@ class BatClient:
                 asyncio.open_connection(HOST, PORT),
                 timeout=10.0
             )
-            self.add_output("TCP-yhteys muodostettu, odotetaan palvelimen vastausta... (timeout 15s)\n")
+            self.add_output("*** TCP-yhteys muodostettu, odotetaan palvelimen vastausta... ***\n")
             curses.doupdate()  # Päivitä näyttö heti
 
             # Odota ensimmäistä dataa palvelimelta (15 sekuntia)
@@ -428,7 +428,7 @@ class BatClient:
                     return False
 
                 # Palvelin vastasi - käsittele ensimmäinen data
-                self.add_output("Yhteys muodostettu!\n")
+                self.add_output("*** Yhteys muodostettu! ***\n")
 
                 # Käsittele saatu data normaalisti
                 if self.debug_mode:
@@ -504,7 +504,7 @@ class BatClient:
     async def auto_login(self):
         """Automaattinen kirjautuminen .env tiedoista"""
         if self.username and self.password:
-            self.add_output("Automaattinen kirjautuminen...\n")
+            self.add_output("*** Automaattinen kirjautuminen... ***\n")
             # Odota hetki että palvelin on valmis
             await asyncio.sleep(1.0)
             await self.send_command(self.username)
@@ -899,7 +899,7 @@ class BatClient:
         self.refresh_input()
 
         if not await self.connect():
-            self.add_output("Paina ESC poistuaksesi.")
+            self.add_output("*** Paina ESC poistuaksesi. ***\n")
             while self.running:
                 key = self.input_win.getch()
                 if key == 27:
