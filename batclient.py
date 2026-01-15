@@ -17,7 +17,7 @@ import cmds
 # BatMUD palvelimen tiedot
 HOST = "bat.org"
 PORT = 23
-VERSION = "0.8.1"
+VERSION = "0.8.2"
 
 # Telnet protokolla konstantit
 IAC = 255   # Interpret As Command
@@ -163,6 +163,7 @@ class BatClient:
         self.log_filename = None  # Lokitiedoston polku
         self.user_aliases = {}  # Käyttäjän aliakset {nimi: komento}
         self.echo_off = False  # Salasanatila (TELOPT ECHO)
+        self.exit_message = None  # Viesti joka näytetään ohjelman lopussa
 
         # Lataa .env asetukset
         self.env = load_env()
@@ -525,6 +526,7 @@ class BatClient:
                     )
                     if not data:
                         self.add_output("\n*** Yhteys katkennut ***\n")
+                        self.exit_message = "Yhteys palvelimeen katkennut."
                         self.running = False
                         break
 
@@ -575,10 +577,12 @@ class BatClient:
                     pass
                 except (ConnectionResetError, BrokenPipeError, OSError) as e:
                     self.add_output(f"\n*** Yhteys katkesi: {e} ***\n")
+                    self.exit_message = f"Yhteys katkesi: {e}"
                     self.running = False
                     break
                 except Exception as e:
                     self.add_output(f"\n*** Yhteysvirhe: {e} ***\n")
+                    self.exit_message = f"Yhteysvirhe: {e}"
                     self.running = False
                     break
         except asyncio.CancelledError:
@@ -931,14 +935,22 @@ class BatClient:
                     pass
 
 
+exit_message = None
+
+
 def main(stdscr):
     """Main wrapper curses:lle"""
-    asyncio.run(BatClient(stdscr).run())
+    global exit_message
+    client = BatClient(stdscr)
+    asyncio.run(client.run())
+    exit_message = client.exit_message
 
 
 if __name__ == "__main__":
     try:
         curses.wrapper(main)
+        if exit_message:
+            print(f"\n{exit_message}")
     except KeyboardInterrupt:
         pass
     except Exception as e:
