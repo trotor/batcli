@@ -17,7 +17,7 @@ import cmds
 # BatMUD palvelimen tiedot
 HOST = "bat.org"
 PORT = 23
-VERSION = "0.8.6"
+VERSION = "0.9.0"
 
 # Telnet protokolla konstantit
 IAC = 255   # Interpret As Command
@@ -171,6 +171,7 @@ class BatClient:
         self.password = self.env.get('BATMUD_PASS', '')
         self.auto_log = self.env.get('AUTO_LOG', '').lower() == 'true'
         self.log_dir = self.env.get('LOG_DIR', '')
+        self.status_emoji = self.env.get('STATUS_EMOJI', '').lower() == 'true'
 
         # Curses asetukset
         curses.start_color()
@@ -335,9 +336,9 @@ class BatClient:
         self.status_win.erase()
         status = f" BatCLI {VERSION} | {HOST}:{PORT}"
         if self.log_file:
-            status += " | LOG"
+            status += " | 📝" if self.status_emoji else " | LOG"
         if self.debug_mode:
-            status += " | DBG"
+            status += " | 🐛" if self.status_emoji else " | DBG"
         if self.scroll_offset > 0:
             status += f" | ↑{self.scroll_offset}"
         # Täytä koko rivi välilyönneillä jotta tausta on yhtenäinen

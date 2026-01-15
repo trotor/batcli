@@ -71,6 +71,14 @@ AUTO_LOG=true
 LOG_DIR=/polku/logeihin  # Valinnainen, oletus: logs/
 ```
 
+### Valinnainen: Emoji-indikaattorit
+
+Käytä emojeja tekstin sijaan status-palkissa:
+
+```bash
+STATUS_EMOJI=true  # Näyttää 📝 🐛 tekstien LOG DBG sijaan
+```
+
 ## Käyttö
 
 ```bash

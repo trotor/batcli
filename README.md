@@ -73,6 +73,14 @@ AUTO_LOG=true
 LOG_DIR=/path/to/logs  # Optional, defaults to logs/
 ```
 
+### Optional: Emoji status indicators
+
+Use emoji instead of text in status bar:
+
+```bash
+STATUS_EMOJI=true  # Shows 📝 🐛 instead of LOG DBG
+```
+
 ## Usage
 
 ```bash
