@@ -17,7 +17,7 @@ import cmds
 # BatMUD palvelimen tiedot
 HOST = "bat.org"
 PORT = 23
-VERSION = "0.8.2"
+VERSION = "0.8.3"
 
 # Telnet protokolla konstantit
 IAC = 255   # Interpret As Command
@@ -333,11 +333,13 @@ class BatClient:
     def refresh_status(self):
         """Päivitä status bar"""
         self.status_win.erase()
-        status = f" Dino's mini Batmud Client {VERSION} | {HOST}:{PORT}"
+        status = f" BatCLI {VERSION} | {HOST}:{PORT}"
+        if self.log_file:
+            status += " | 📝"
         if self.debug_mode:
-            status += " | [DEBUG]"
+            status += " | 🐛"
         if self.scroll_offset > 0:
-            status += f" | Scroll: -{self.scroll_offset}"
+            status += f" | ↑{self.scroll_offset}"
         try:
             self.status_win.addstr(0, 0, status[:self.width-1], curses.color_pair(16) | curses.A_BOLD)
         except curses.error:
