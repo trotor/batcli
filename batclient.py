@@ -17,7 +17,7 @@ import cmds
 # BatMUD palvelimen tiedot
 HOST = "bat.org"
 PORT = 23
-VERSION = "0.7.1"
+VERSION = "0.8.0"
 
 # Telnet protokolla konstantit
 IAC = 255   # Interpret As Command
@@ -30,6 +30,7 @@ WONT = 252
 DO = 253
 DONT = 254
 TELOPT_EOR = 25  # End of Record option
+TELOPT_ECHO = 1  # Echo option
 
 
 # Telnet-komentojen nimet debug-tulostukseen
@@ -161,6 +162,7 @@ class BatClient:
         self.log_file = None  # Lokitiedosto (avattu file handle)
         self.log_filename = None  # Lokitiedoston polku
         self.user_aliases = {}  # Käyttäjän aliakset {nimi: komento}
+        self.echo_off = False  # Salasanatila (TELOPT ECHO)
 
         # Lataa .env asetukset
         self.env = load_env()
@@ -378,21 +380,25 @@ class BatClient:
         available_width = self.width - prompt_len - 1
 
         try:
-            # Laske mikä osa bufferista näytetään
-            # Varmista että kursori on aina näkyvissä
-            if self.cursor_pos < available_width:
-                # Kursori mahtuu näkyviin alusta
-                start = 0
-                visible_input = self.input_buffer[:available_width]
-                cursor_screen_pos = self.cursor_pos
+            # Salasanatilassa ei näytetä syötettä
+            if self.echo_off:
+                self.input_win.move(0, prompt_len)
             else:
-                # Scrollaa niin että kursori näkyy
-                start = self.cursor_pos - available_width + 1
-                visible_input = self.input_buffer[start:start + available_width]
-                cursor_screen_pos = available_width - 1
+                # Laske mikä osa bufferista näytetään
+                # Varmista että kursori on aina näkyvissä
+                if self.cursor_pos < available_width:
+                    # Kursori mahtuu näkyviin alusta
+                    start = 0
+                    visible_input = self.input_buffer[:available_width]
+                    cursor_screen_pos = self.cursor_pos
+                else:
+                    # Scrollaa niin että kursori näkyy
+                    start = self.cursor_pos - available_width + 1
+                    visible_input = self.input_buffer[start:start + available_width]
+                    cursor_screen_pos = available_width - 1
 
-            self.input_win.addstr(0, prompt_len, visible_input)
-            self.input_win.move(0, prompt_len + cursor_screen_pos)
+                self.input_win.addstr(0, prompt_len, visible_input)
+                self.input_win.move(0, prompt_len + cursor_screen_pos)
         except curses.error:
             pass
         self.input_win.touchwin()  # Merkitse ikkuna muuttuneeksi
@@ -400,13 +406,65 @@ class BatClient:
 
     async def connect(self):
         """Yhdistä BatMUD-palvelimeen"""
-        self.add_output(f"Yhdistetään palvelimeen {HOST}:{PORT}...")
+        self.add_output(f"Yhdistetään palvelimeen {HOST}:{PORT}... (timeout 10s)\n")
+        curses.doupdate()  # Päivitä näyttö heti
         try:
-            self.reader, self.writer = await asyncio.open_connection(HOST, PORT)
-            self.add_output("Yhteys muodostettu!\n")
-            return True
+            # Yhteyden muodostus timeoutilla (10 sekuntia)
+            self.reader, self.writer = await asyncio.wait_for(
+                asyncio.open_connection(HOST, PORT),
+                timeout=10.0
+            )
+            self.add_output("TCP-yhteys muodostettu, odotetaan palvelimen vastausta... (timeout 15s)\n")
+            curses.doupdate()  # Päivitä näyttö heti
+
+            # Odota ensimmäistä dataa palvelimelta (15 sekuntia)
+            try:
+                first_data = await asyncio.wait_for(
+                    self.reader.read(1024),
+                    timeout=15.0
+                )
+                if not first_data:
+                    self.add_output("*** Palvelin sulki yhteyden - BatMUD saattaa olla alhaalla ***\n")
+                    return False
+
+                # Palvelin vastasi - käsittele ensimmäinen data
+                self.add_output("Yhteys muodostettu!\n")
+
+                # Käsittele saatu data normaalisti
+                if self.debug_mode:
+                    debug_str = format_debug_bytes(first_data)
+                    self.add_output(f"[DEBUG] {debug_str}\n")
+
+                text, prompt_detected = self.handle_telnet("", first_data)
+                if text:
+                    self.add_output(text)
+                if prompt_detected:
+                    last_newline = text.rfind('\n')
+                    if last_newline >= 0:
+                        self.mud_prompt = text[last_newline + 1:]
+                    else:
+                        self.mud_prompt = text
+                    self.refresh_input()
+
+                return True
+
+            except asyncio.TimeoutError:
+                self.add_output("*** Palvelin ei vastaa - BatMUD saattaa olla alhaalla ***\n")
+                if self.writer:
+                    self.writer.close()
+                return False
+
+        except asyncio.TimeoutError:
+            self.add_output("*** Yhteysaikakatkaisu - palvelimeen ei saatu yhteyttä ***\n")
+            return False
+        except ConnectionRefusedError:
+            self.add_output("*** Yhteys evätty - palvelin ei hyväksy yhteyksiä ***\n")
+            return False
+        except OSError as e:
+            self.add_output(f"*** Verkkovirhe: {e} ***\n")
+            return False
         except Exception as e:
-            self.add_output(f"Yhteysvirhe: {e}\n")
+            self.add_output(f"*** Yhteysvirhe: {e} ***\n")
             return False
 
     def start_auto_log(self):
@@ -515,8 +573,13 @@ class BatClient:
 
                 except asyncio.TimeoutError:
                     pass
+                except (ConnectionResetError, BrokenPipeError, OSError) as e:
+                    self.add_output(f"\n*** Yhteys katkesi: {e} ***\n")
+                    self.running = False
+                    break
                 except Exception as e:
-                    self.add_output(f"\nLukuvirhe: {e}\n")
+                    self.add_output(f"\n*** Yhteysvirhe: {e} ***\n")
+                    self.running = False
                     break
         except asyncio.CancelledError:
             pass
@@ -562,11 +625,23 @@ class BatClient:
                         if opt == TELOPT_EOR:
                             # Hyväksy EOR - vastaa DO
                             response = bytes([IAC, DO, TELOPT_EOR])
+                        elif opt == TELOPT_ECHO:
+                            # Palvelin hoitaa echon (salasana) - vastaa DO
+                            response = bytes([IAC, DO, TELOPT_ECHO])
+                            self.echo_off = True
                         else:
                             # Muut - vastaa DONT
                             response = bytes([IAC, DONT, opt])
                         if self.writer:
                             self.writer.write(response)
+
+                    elif cmd == WONT:
+                        if opt == TELOPT_ECHO:
+                            # Palvelin ei enää hoida echoa - vastaa DONT
+                            response = bytes([IAC, DONT, TELOPT_ECHO])
+                            self.echo_off = False
+                            if self.writer:
+                                self.writer.write(response)
 
                     i += 3
 
