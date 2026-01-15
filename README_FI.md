@@ -15,6 +15,8 @@ Yksinkertainen terminaalipohjainen MUD-client [BatMUD](https://www.bat.org)-peli
 - Vieritys taaksepäin tulostushistoriassa
 - Automaattinen kirjautuminen .env-tiedostosta
 - **Prompt hold**: MUD:n prompt (IAC GA/EOR) näkyy syöttörivillä
+- **Salasanan piilotus**: Syöte piilotetaan kun palvelin pyytää salasanaa
+- **Yhteydenhallinta**: Selkeät ilmoitukset yhteyden katketessa tai virhetilanteissa
 - **Debug-tila**: Näytä raaka telnet-data komennolla `/debug on`
 - **Sessioiden tallennus**: Tallenna sessiot tiedostoon `/log`-komennolla
 - **Automaattinen loggaus**: Aloita loggaus automaattisesti .env:stä
