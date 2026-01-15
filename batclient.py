@@ -17,7 +17,7 @@ import cmds
 # BatMUD palvelimen tiedot
 HOST = "bat.org"
 PORT = 23
-VERSION = "0.9.0"
+VERSION = "0.9.1"
 
 # Telnet protokolla konstantit
 IAC = 255   # Interpret As Command
@@ -779,8 +779,8 @@ class BatClient:
                             if not await self.handle_client_command(cmd):
                                 break  # /quit
                         else:
-                            # Tarkista alias ja lähetä palvelimelle
-                            expanded = self.expand_alias(cmd)
+                            # Lähetä palvelimelle (myös tyhjä rivi)
+                            expanded = self.expand_alias(cmd) if cmd else ""
                             await self.send_command(expanded)
 
                         self.input_buffer = ""
