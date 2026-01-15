@@ -17,7 +17,7 @@ import cmds
 # BatMUD palvelimen tiedot
 HOST = "bat.org"
 PORT = 23
-VERSION = "0.8.5"
+VERSION = "0.8.6"
 
 # Telnet protokolla konstantit
 IAC = 255   # Interpret As Command
@@ -340,8 +340,10 @@ class BatClient:
             status += " | DBG"
         if self.scroll_offset > 0:
             status += f" | ↑{self.scroll_offset}"
+        # Täytä koko rivi välilyönneillä jotta tausta on yhtenäinen
+        status = status.ljust(self.width - 1)
         try:
-            self.status_win.addstr(0, 0, status[:self.width-1], curses.color_pair(16) | curses.A_BOLD)
+            self.status_win.addstr(0, 0, status, curses.color_pair(16) | curses.A_BOLD)
         except curses.error:
             pass
         self.status_win.noutrefresh()
