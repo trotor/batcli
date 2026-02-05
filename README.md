@@ -106,6 +106,8 @@ All commands starting with `/` are handled by the client. Use `//` to send a lit
 |---------|--------|
 | `/help` | Show help |
 | `/clear` | Clear the screen |
+| `/connect [host] [port]` | Connect to server (uses .env or defaults to bat.org:23) |
+| `/disconnect` | Disconnect from server (stays in console) |
 | `/log [on\|off]` | Start/stop session logging |
 | `/alias [name] [cmd]` | Create or list aliases |
 | `/alias -d <name>` | Delete an alias |

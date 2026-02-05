@@ -17,7 +17,7 @@ import cmds
 # BatMUD palvelimen tiedot
 HOST = "bat.org"
 PORT = 23
-VERSION = "0.7.1"
+VERSION = "0.8.0"
 
 # Telnet protokolla konstantit
 IAC = 255   # Interpret As Command
@@ -330,7 +330,14 @@ class BatClient:
     def refresh_status(self):
         """Päivitä status bar"""
         self.status_win.erase()
-        status = f" Dino's mini Batmud Client {VERSION} | {HOST}:{PORT}"
+
+        # Näytä yhteyden tila
+        if self.reader is not None and self.writer is not None:
+            conn_status = "CONNECTED"
+        else:
+            conn_status = "DISCONNECTED"
+
+        status = f" Dino's mini Batmud Client {VERSION} | {conn_status}"
         if self.debug_mode:
             status += " | [DEBUG]"
         if self.scroll_offset > 0:
@@ -460,6 +467,11 @@ class BatClient:
         """Lue dataa palvelimelta"""
         try:
             while self.running:
+                # Tarkista onko yhteys olemassa
+                if self.reader is None or self.writer is None:
+                    await asyncio.sleep(0.1)
+                    continue
+
                 try:
                     data = await asyncio.wait_for(
                         self.reader.read(4096),
@@ -467,8 +479,10 @@ class BatClient:
                     )
                     if not data:
                         self.add_output("\n*** Yhteys katkennut ***\n")
-                        self.running = False
-                        break
+                        self.reader = None
+                        self.writer = None
+                        self.refresh_status()
+                        continue
 
                     # Debug: näytä raakadata luettavassa muodossa
                     if self.debug_mode:
@@ -627,17 +641,23 @@ class BatClient:
 
     async def send_command(self, cmd):
         """Lähetä komento palvelimelle"""
-        if self.writer:
-            try:
-                self.writer.write((cmd + "\n").encode('iso-8859-1'))
-                await self.writer.drain()
+        if self.writer is None or self.reader is None:
+            self.add_output("\n*** Ei yhteyttä palvelimelle - käytä /connect ***\n")
+            return
 
-                # Lisää komentoon historiaan
-                if cmd.strip():
-                    self.command_history.append(cmd)
-                    self.history_index = -1
-            except Exception as e:
-                self.add_output(f"\nLähetysvirhe: {e}\n")
+        try:
+            self.writer.write((cmd + "\n").encode('iso-8859-1'))
+            await self.writer.drain()
+
+            # Lisää komentoon historiaan
+            if cmd.strip():
+                self.command_history.append(cmd)
+                self.history_index = -1
+        except Exception as e:
+            self.add_output(f"\nLähetysvirhe: {e}\n")
+            self.reader = None
+            self.writer = None
+            self.refresh_status()
 
     def expand_alias(self, cmd):
         """Laajenna alias jos löytyy."""
@@ -823,29 +843,27 @@ class BatClient:
         self.refresh_status()
         self.refresh_input()
 
-        if not await self.connect():
-            self.add_output("Paina ESC poistuaksesi.")
-            while self.running:
-                key = self.input_win.getch()
-                if key == 27:
-                    break
-                await asyncio.sleep(0.1)
-            return
+        # Yritä yhdistää alkuun, mutta jatka vaikka epäonnistuisi
+        if await self.connect():
+            # Aloita automaattinen loggaus jos määritelty
+            self.start_auto_log()
+            # Käynnistä auto-login
+            asyncio.create_task(self.auto_login())
+        else:
+            self.add_output("\n")
+            self.add_output("*** Alkuyhteys epäonnistui ***\n")
+            self.add_output("Voit yhdistää palvelimelle komennolla /connect\n")
 
-        # Aloita automaattinen loggaus jos määritelty
-        self.start_auto_log()
-
-        # Käynnistä tehtävät
-        read_task = asyncio.create_task(self.read_from_server())
+        # Käynnistä tehtävät (pyörivät vaikka ei yhteyttä)
+        self.read_task = asyncio.create_task(self.read_from_server())
         input_task = asyncio.create_task(self.handle_input())
-        login_task = asyncio.create_task(self.auto_login())
 
         try:
-            await asyncio.gather(read_task, input_task)
+            await asyncio.gather(self.read_task, input_task)
         except asyncio.CancelledError:
             pass
         finally:
-            read_task.cancel()
+            self.read_task.cancel()
             input_task.cancel()
 
             if self.writer:
