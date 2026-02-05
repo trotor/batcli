@@ -17,6 +17,8 @@ A simple terminal-based MUD client for [BatMUD](https://www.bat.org) (bat.org:23
 - Scroll back through output history
 - Auto-login from .env file
 - **Prompt hold**: MUD prompt (IAC GA/EOR) displayed on input line
+- **Password hiding**: Input hidden when server requests password
+- **Connection handling**: Clear messages on disconnect or connection errors
 - **Debug mode**: View raw telnet data with `/debug on`
 - **Session logging**: Save sessions to file with `/log`
 - **Auto-logging**: Automatically start logging on connect via .env
@@ -69,6 +71,14 @@ Enable automatic session logging by adding to your `.env`:
 ```bash
 AUTO_LOG=true
 LOG_DIR=/path/to/logs  # Optional, defaults to logs/
+```
+
+### Optional: Emoji status indicators
+
+Use emoji instead of text in status bar:
+
+```bash
+STATUS_EMOJI=true  # Shows 📝 🐛 instead of LOG DBG
 ```
 
 ## Usage
