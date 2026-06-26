@@ -17,7 +17,7 @@ import cmds
 # BatMUD palvelimen tiedot
 HOST = "bat.org"
 PORT = 23
-VERSION = "0.9.1"
+VERSION = "0.10.0"
 
 # Telnet protokolla konstantit
 IAC = 255   # Interpret As Command
@@ -122,24 +122,49 @@ def load_env():
 
     return env_vars
 
-# ANSI värikoodit -> curses värit
-ANSI_COLORS = {
-    30: curses.COLOR_BLACK,
-    31: curses.COLOR_RED,
-    32: curses.COLOR_GREEN,
-    33: curses.COLOR_YELLOW,
-    34: curses.COLOR_BLUE,
-    35: curses.COLOR_MAGENTA,
-    36: curses.COLOR_CYAN,
-    37: curses.COLOR_WHITE,
-    90: curses.COLOR_BLACK,    # Bright black (gray)
-    91: curses.COLOR_RED,      # Bright red
-    92: curses.COLOR_GREEN,    # Bright green
-    93: curses.COLOR_YELLOW,   # Bright yellow
-    94: curses.COLOR_BLUE,     # Bright blue
-    95: curses.COLOR_MAGENTA,  # Bright magenta
-    96: curses.COLOR_CYAN,     # Bright cyan
-    97: curses.COLOR_WHITE,    # Bright white
+def _to_curses_rgb(value):
+    """Muunna 0-255 RGB-arvo curses-asteikolle 0-1000."""
+    return max(0, min(1000, round(value * 1000 / 255)))
+
+
+# Väriteemat. Jokainen teema määrittää 8 perusvärin RGB-arvot (0-255)
+# järjestyksessä: musta, punainen, vihreä, keltainen, sininen, magenta,
+# syaani, valkoinen - sekä status barin värit. Palettivärit otetaan käyttöön
+# curses.init_color():lla vain päätteillä jotka tukevat värien muuttamista
+# (esim. iTerm2); muuten käytetään päätteen omia värejä.
+THEMES = {
+    "default": {
+        "status_fg": curses.COLOR_WHITE,
+        "status_bg": curses.COLOR_BLUE,
+        "colors": [
+            (0, 0, 0), (205, 0, 0), (0, 205, 0), (205, 205, 0),
+            (0, 0, 238), (205, 0, 205), (0, 205, 205), (229, 229, 229),
+        ],
+    },
+    "matrix": {
+        "status_fg": curses.COLOR_BLACK,
+        "status_bg": curses.COLOR_GREEN,
+        "colors": [
+            (0, 0, 0), (0, 90, 0), (0, 255, 0), (0, 180, 0),
+            (0, 110, 0), (0, 140, 0), (0, 200, 0), (180, 255, 180),
+        ],
+    },
+    "amber": {
+        "status_fg": curses.COLOR_BLACK,
+        "status_bg": curses.COLOR_YELLOW,
+        "colors": [
+            (0, 0, 0), (255, 120, 0), (255, 176, 0), (255, 200, 0),
+            (200, 120, 0), (255, 140, 0), (255, 190, 70), (255, 210, 140),
+        ],
+    },
+    "solarized": {
+        "status_fg": curses.COLOR_WHITE,
+        "status_bg": curses.COLOR_BLUE,
+        "colors": [
+            (7, 54, 66), (220, 50, 47), (133, 153, 0), (181, 137, 0),
+            (38, 139, 210), (211, 54, 130), (42, 161, 152), (238, 232, 213),
+        ],
+    },
 }
 
 
@@ -172,17 +197,17 @@ class BatClient:
         self.auto_log = self.env.get('AUTO_LOG', '').lower() == 'true'
         self.log_dir = self.env.get('LOG_DIR', '')
         self.status_emoji = self.env.get('STATUS_EMOJI', '').lower() == 'true'
+        self.theme_name = self.env.get('THEME', 'default').strip().lower() or 'default'
 
         # Curses asetukset
         curses.start_color()
         curses.use_default_colors()
 
-        # Luo väriparit (fg, bg)
-        for i in range(1, 16):
-            curses.init_pair(i, i % 8, -1)
+        # Luo väriparit: pari (väri+1) näyttää curses-värin (0-7)
+        self.setup_color_pairs()
 
-        # Lisää väriparit kirkkailla väreillä
-        curses.init_pair(16, curses.COLOR_WHITE, curses.COLOR_BLUE)  # Status bar
+        # Ota väriteema käyttöön (status bar + mahdolliset palettivärit)
+        self.apply_theme(self.theme_name, announce=False)
 
         curses.halfdelay(1)  # Palauta get_wch():stä 100ms jälkeen
         self.stdscr.keypad(True)
@@ -207,28 +232,95 @@ class BatClient:
         self.input_win = curses.newwin(1, self.width, self.height - 1, 0)
         self.input_win.keypad(True)
 
+    def setup_color_pairs(self):
+        """Luo väriparit 1-8: pari (c+1) näyttää curses-värin c (0-7)."""
+        for c in range(8):
+            curses.init_pair(c + 1, c, -1)
+
+    def list_themes(self):
+        """Palauta saatavilla olevat teemanimet aakkosjärjestyksessä."""
+        return sorted(THEMES.keys())
+
+    def apply_theme(self, name, announce=True):
+        """
+        Ota väriteema käyttöön.
+
+        Args:
+            name: Teeman nimi
+            announce: Tulostetaanko ilmoitus ja päivitetäänkö näyttö
+
+        Returns:
+            bool: True jos teema löytyi ja otettiin käyttöön
+        """
+        name = (name or "").strip().lower()
+        theme = THEMES.get(name)
+        if theme is None:
+            if announce:
+                self.add_output(f"*** Tuntematon teema: {name} ***\n")
+            return False
+
+        self.theme_name = name
+
+        # Status barin värit (toimivat ilman init_coloria)
+        status_fg = theme.get("status_fg", curses.COLOR_WHITE)
+        status_bg = theme.get("status_bg", curses.COLOR_BLUE)
+        try:
+            curses.init_pair(16, status_fg, status_bg)
+        except curses.error:
+            pass
+        if getattr(self, "status_win", None):
+            self.status_win.bkgd(' ', curses.color_pair(16))
+
+        # Palettivärit otetaan käyttöön init_color():lla. Käynnistyksessä
+        # "default"-teemaa EI sovelleta, jotta päätteen oma väriskeema säilyy;
+        # /theme default palauttaa vakio-xterm-värit.
+        colors = theme.get("colors")
+        if colors and (announce or name != "default"):
+            if curses.can_change_color():
+                for idx, (r, g, b) in enumerate(colors):
+                    try:
+                        curses.init_color(idx, _to_curses_rgb(r),
+                                          _to_curses_rgb(g), _to_curses_rgb(b))
+                    except curses.error:
+                        pass
+            elif announce:
+                self.add_output(
+                    "*** Pääte ei tue värien muuttamista - vain status barin "
+                    "värit vaihtuivat ***\n"
+                )
+
+        if announce:
+            self.add_output(f"*** Teema: {name} ***\n")
+            self.refresh_output()
+            self.refresh_status()
+            self.refresh_input()
+        return True
+
     def parse_ansi(self, text):
         """Parsii ANSI-koodit ja palauttaa listan (teksti, attribuutit) pareja"""
         result = []
         current_attr = curses.A_NORMAL
-        current_fg = -1
-        bold = False
+        current_fg = -1      # curses-värin indeksi 0-7, tai -1 = päätteen oletus
+        bold = False         # erillinen lihavointi (koodi 1)
+        bright = False       # kirkas väri (koodit 90-97)
 
         # ANSI escape sequence pattern
         ansi_pattern = re.compile(r'\x1b\[([0-9;]*)m')
+
+        def make_attr():
+            attr = current_attr
+            if current_fg >= 0:
+                # ANSI-väri c (0-7) -> väripari c+1 (pari 0 on varattu curses:lle)
+                attr |= curses.color_pair(current_fg + 1)
+            if bold or bright:
+                attr |= curses.A_BOLD
+            return attr
 
         pos = 0
         for match in ansi_pattern.finditer(text):
             # Lisää teksti ennen ANSI-koodia
             if match.start() > pos:
-                plain_text = text[pos:match.start()]
-                attr = current_attr
-                if current_fg >= 0:
-                    color_pair = (current_fg % 8) + 1
-                    attr |= curses.color_pair(color_pair)
-                    if bold or current_fg >= 90:
-                        attr |= curses.A_BOLD
-                result.append((plain_text, attr))
+                result.append((text[pos:match.start()], make_attr()))
 
             # Käsittele ANSI-koodi
             codes = match.group(1).split(';') if match.group(1) else ['0']
@@ -242,29 +334,28 @@ class BatClient:
                     current_attr = curses.A_NORMAL
                     current_fg = -1
                     bold = False
+                    bright = False
                 elif code_int == 1:  # Bold
                     bold = True
                 elif code_int == 4:  # Underline
                     current_attr |= curses.A_UNDERLINE
                 elif code_int == 7:  # Reverse
                     current_attr |= curses.A_REVERSE
-                elif 30 <= code_int <= 37 or 90 <= code_int <= 97:  # Foreground
-                    current_fg = code_int
+                elif 30 <= code_int <= 37:  # Foreground (normaali)
+                    current_fg = code_int - 30
+                    bright = False
+                elif 90 <= code_int <= 97:  # Foreground (kirkas)
+                    current_fg = code_int - 90
+                    bright = True
                 elif code_int == 39:  # Default foreground
                     current_fg = -1
+                    bright = False
 
             pos = match.end()
 
         # Lisää loppu teksti
         if pos < len(text):
-            plain_text = text[pos:]
-            attr = current_attr
-            if current_fg >= 0:
-                color_pair = (current_fg % 8) + 1
-                attr |= curses.color_pair(color_pair)
-                if bold or current_fg >= 90:
-                    attr |= curses.A_BOLD
-            result.append((plain_text, attr))
+            result.append((text[pos:], make_attr()))
 
         return result
 
@@ -419,12 +510,21 @@ class BatClient:
 
     async def connect(self):
         """Yhdistä BatMUD-palvelimeen"""
-        self.add_output(f"*** Yhdistetään palvelimeen {HOST}:{PORT}... ***\n")
+        # Käytä .env:n BATMUD_HOST/BATMUD_PORT jos määritelty, muuten oletukset
+        host = self.env.get('BATMUD_HOST', '').strip() or HOST
+        port_str = self.env.get('BATMUD_PORT', '').strip()
+        try:
+            port = int(port_str) if port_str else PORT
+        except ValueError:
+            self.add_output(f"*** Virheellinen BATMUD_PORT .env:ssä: {port_str} - käytetään {PORT} ***\n")
+            port = PORT
+
+        self.add_output(f"*** Yhdistetään palvelimeen {host}:{port}... ***\n")
         curses.doupdate()  # Päivitä näyttö heti
         try:
             # Yhteyden muodostus timeoutilla (10 sekuntia)
             self.reader, self.writer = await asyncio.wait_for(
-                asyncio.open_connection(HOST, PORT),
+                asyncio.open_connection(host, port),
                 timeout=10.0
             )
             self.add_output("*** TCP-yhteys muodostettu, odotetaan palvelimen vastausta... ***\n")
@@ -732,8 +832,8 @@ class BatClient:
             self.writer.write((cmd + "\n").encode('iso-8859-1'))
             await self.writer.drain()
 
-            # Lisää komentoon historiaan
-            if cmd.strip():
+            # Lisää komento historiaan (ei salasanaa - echo_off-tilassa)
+            if cmd.strip() and not self.echo_off:
                 self.command_history.append(cmd)
                 self.history_index = -1
         except Exception as e:

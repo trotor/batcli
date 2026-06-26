@@ -1,5 +1,8 @@
 # BatCLI - No external dependencies
-# Uses only Python standard library:
-# - asyncio
-# - curses
-# - socket
+# Uses only the Python standard library:
+# - asyncio      (networking, event loop)
+# - curses       (terminal UI)
+# - re           (ANSI / telnet parsing)
+# - pathlib      (file paths)
+# - datetime     (log timestamps)
+# - collections  (deque buffers)

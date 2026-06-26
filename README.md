@@ -23,6 +23,7 @@ A simple terminal-based MUD client for [BatMUD](https://www.bat.org) (bat.org:23
 - **Session logging**: Save sessions to file with `/log`
 - **Auto-logging**: Automatically start logging on connect via .env
 - **User aliases**: Create shortcuts for commands with `/alias`
+- **Color themes**: Switch the color palette with `/theme` (default, matrix, amber, solarized)
 
 ## Requirements
 
@@ -116,6 +117,7 @@ All commands starting with `/` are handled by the client. Use `//` to send a lit
 |---------|--------|
 | `/help` | Show help |
 | `/clear` | Clear the screen |
+| `/theme [name]` | Change color theme (default, matrix, amber, solarized) |
 | `/connect [host] [port]` | Connect to server (uses .env or defaults to bat.org:23) |
 | `/disconnect` | Disconnect from server (stays in console) |
 | `/log [on\|off]` | Start/stop session logging |
@@ -123,6 +125,14 @@ All commands starting with `/` are handled by the client. Use `//` to send a lit
 | `/alias -d <name>` | Delete an alias |
 | `/debug on\|off` | Toggle debug mode |
 | `/quit` | Exit the client |
+
+## Tests
+
+Run the unit tests (no network or terminal required):
+
+```bash
+python3 -m unittest discover -s tests
+```
 
 ## Security Note
 

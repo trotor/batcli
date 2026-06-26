@@ -21,6 +21,7 @@ Yksinkertainen terminaalipohjainen MUD-client [BatMUD](https://www.bat.org)-peli
 - **Sessioiden tallennus**: Tallenna sessiot tiedostoon `/log`-komennolla
 - **Automaattinen loggaus**: Aloita loggaus automaattisesti .env:stä
 - **Käyttäjäaliakset**: Luo pikakomentoja `/alias`-komennolla
+- **Väriteemat**: Vaihda väripaletti `/theme`-komennolla (default, matrix, amber, solarized)
 
 ## Vaatimukset
 
@@ -114,11 +115,22 @@ Kaikki `/`-alkuiset komennot käsitellään clientissa. Käytä `//` lähettää
 |---------|----------|
 | `/help` | Näytä ohje |
 | `/clear` | Tyhjennä näyttö |
+| `/theme [nimi]` | Vaihda väriteema (default, matrix, amber, solarized) |
+| `/connect [host] [port]` | Yhdistä palvelimelle (käyttää .env:iä tai oletusta bat.org:23) |
+| `/disconnect` | Katkaise yhteys (jää konsoliin) |
 | `/log [on\|off]` | Aloita/lopeta sessioiden tallennus |
 | `/alias [nimi] [cmd]` | Luo tai listaa aliakset |
 | `/alias -d <nimi>` | Poista alias |
 | `/debug on\|off` | Debug-tilan vaihto |
 | `/quit` | Poistu clientista |
+
+## Testit
+
+Aja yksikkötestit (eivät vaadi verkkoyhteyttä eivätkä päätettä):
+
+```bash
+python3 -m unittest discover -s tests
+```
 
 ## Tietoturvahuomautus
 

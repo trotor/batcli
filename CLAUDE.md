@@ -21,6 +21,10 @@ Päivitä VERSION-muuttuja ennen commitia.
   - `clear.py` - /clear komento
   - `log.py` - /log komento (sessioiden tallennus)
   - `alias.py` - /alias komento (pikakomennot)
+  - `connect.py` - /connect komento (yhdistä palvelimelle)
+  - `disconnect.py` - /disconnect komento (katkaise yhteys)
+  - `theme.py` - /theme komento (väriteeman vaihto)
+- `tests/` - Yksikkötestit (python3 -m unittest discover -s tests)
 - `.env` - Käyttäjän asetukset ja tunnukset (ei versionhallinnassa)
 - `.env_sample` - Esimerkki .env-tiedostosta
 - `logs/` - Sessiolokit (ei versionhallinnassa)
