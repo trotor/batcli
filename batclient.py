@@ -17,7 +17,7 @@ import cmds
 # BatMUD palvelimen tiedot
 HOST = "bat.org"
 PORT = 23
-VERSION = "0.10.0"
+VERSION = "0.11.0"
 
 # Telnet protokolla konstantit
 IAC = 255   # Interpret As Command
@@ -190,6 +190,15 @@ class BatClient:
         self.echo_off = False  # Salasanatila (TELOPT ECHO)
         self.exit_message = None  # Viesti joka näytetään ohjelman lopussa
 
+        # Auto-reconnect tila
+        self.reconnecting = False  # Onko uudelleenyhdistys käynnissä
+        self.reconnect_attempt = 0  # Nykyinen yritysnumero
+        self.reconnect_task = None  # Uudelleenyhdistys-task
+        self.intentional_disconnect = False  # True kun käyttäjä katkaisi (/disconnect)
+        self.reconnect_max_attempts = 6  # Montako kertaa yritetään
+        self.reconnect_base_delay = 2  # Ensimmäinen viive (s)
+        self.reconnect_max_delay = 30  # Backoffin maksimi (s)
+
         # Lataa .env asetukset
         self.env = load_env()
         self.username = self.env.get('BATMUD_USER', '')
@@ -198,6 +207,8 @@ class BatClient:
         self.log_dir = self.env.get('LOG_DIR', '')
         self.status_emoji = self.env.get('STATUS_EMOJI', '').lower() == 'true'
         self.theme_name = self.env.get('THEME', 'default').strip().lower() or 'default'
+        # Auto-reconnect päällä oletuksena, pois jos AUTO_RECONNECT=false
+        self.auto_reconnect = self.env.get('AUTO_RECONNECT', 'true').strip().lower() != 'false'
 
         # Curses asetukset
         curses.start_color()
@@ -427,7 +438,9 @@ class BatClient:
         self.status_win.erase()
 
         # Näytä yhteyden tila
-        if self.reader is not None and self.writer is not None:
+        if self.reconnecting:
+            conn_status = f"RECONNECTING {self.reconnect_attempt}/{self.reconnect_max_attempts}"
+        elif self.reader is not None and self.writer is not None:
             conn_status = "CONNECTED"
         else:
             conn_status = "DISCONNECTED"
@@ -508,17 +521,19 @@ class BatClient:
         self.input_win.touchwin()  # Merkitse ikkuna muuttuneeksi
         self.input_win.refresh()
 
-    async def connect(self):
-        """Yhdistä BatMUD-palvelimeen"""
-        # Käytä .env:n BATMUD_HOST/BATMUD_PORT jos määritelty, muuten oletukset
+    def resolve_host_port(self):
+        """Palauta (host, port) .env:stä tai oletukset (bat.org:23)."""
         host = self.env.get('BATMUD_HOST', '').strip() or HOST
         port_str = self.env.get('BATMUD_PORT', '').strip()
         try:
             port = int(port_str) if port_str else PORT
         except ValueError:
-            self.add_output(f"*** Virheellinen BATMUD_PORT .env:ssä: {port_str} - käytetään {PORT} ***\n")
             port = PORT
+        return host, port
 
+    async def connect(self):
+        """Yhdistä BatMUD-palvelimeen"""
+        host, port = self.resolve_host_port()
         self.add_output(f"*** Yhdistetään palvelimeen {host}:{port}... ***\n")
         curses.doupdate()  # Päivitä näyttö heti
         try:
@@ -542,6 +557,7 @@ class BatClient:
 
                 # Palvelin vastasi - käsittele ensimmäinen data
                 self.add_output("*** Yhteys muodostettu! ***\n")
+                self.intentional_disconnect = False
 
                 # Käsittele saatu data normaalisti
                 if self.debug_mode:
@@ -627,6 +643,96 @@ class BatClient:
             await asyncio.sleep(1.0)
             await self.send_command(self.username)
 
+    def cancel_reconnect(self):
+        """Peruuta käynnissä oleva uudelleenyhdistys."""
+        self.reconnecting = False
+        self.reconnect_attempt = 0
+        if self.reconnect_task and not self.reconnect_task.done():
+            self.reconnect_task.cancel()
+        self.reconnect_task = None
+
+    def handle_connection_lost(self, reason, reconnect=True):
+        """
+        Käsittele katkennut yhteys. Käynnistää tarvittaessa uudelleenyhdistyksen.
+
+        Args:
+            reason: Syy joka näytetään käyttäjälle
+            reconnect: Yritetäänkö yhdistää automaattisesti uudelleen
+        """
+        self.reader = None
+        self.writer = None
+
+        # Käyttäjän tarkoituksellinen katkaisu - älä meluta äläkä yhdistä
+        if self.intentional_disconnect:
+            self.refresh_status()
+            return
+
+        self.add_output(f"\n*** {reason} ***\n")
+        self.refresh_status()
+
+        if (reconnect and self.auto_reconnect and not self.reconnecting
+                and self.running):
+            self.reconnect_task = asyncio.create_task(self.reconnect_loop())
+
+    async def reconnect_loop(self):
+        """Yritä yhdistää uudelleen kasvavalla viiveellä (exponential backoff)."""
+        self.reconnecting = True
+        delay = self.reconnect_base_delay
+        try:
+            for attempt in range(1, self.reconnect_max_attempts + 1):
+                if self.intentional_disconnect or not self.running:
+                    break
+
+                self.reconnect_attempt = attempt
+                self.refresh_status()
+                self.add_output(
+                    f"*** Yhdistetään uudelleen {delay}s kuluttua "
+                    f"({attempt}/{self.reconnect_max_attempts})... ***\n"
+                )
+                curses.doupdate()
+
+                await asyncio.sleep(delay)
+
+                # Tilanne saattoi muuttua viiveen aikana
+                if (self.intentional_disconnect or not self.running
+                        or self.reader is not None):
+                    break
+
+                host, port = self.resolve_host_port()
+                try:
+                    self.reader, self.writer = await asyncio.wait_for(
+                        asyncio.open_connection(host, port),
+                        timeout=10.0
+                    )
+                    self.intentional_disconnect = False
+                    self.reconnecting = False
+                    self.reconnect_attempt = 0
+                    self.add_output("*** Yhteys muodostettu uudelleen! ***\n")
+                    self.refresh_status()
+                    curses.doupdate()
+                    # Kirjaudu tarvittaessa uudelleen
+                    asyncio.create_task(self.auto_login())
+                    return
+                except Exception as e:
+                    self.reader = None
+                    self.writer = None
+                    self.add_output(f"*** Uudelleenyhdistys epäonnistui: {e} ***\n")
+                    curses.doupdate()
+                    delay = min(delay * 2, self.reconnect_max_delay)
+        except asyncio.CancelledError:
+            return
+        finally:
+            self.reconnecting = False
+            self.reconnect_attempt = 0
+
+        # Kaikki yritykset epäonnistuivat
+        if self.reader is None and not self.intentional_disconnect and self.running:
+            self.refresh_status()
+            self.add_output(
+                "*** Automaattinen uudelleenyhdistys luovutti. Käytä /connect. ***\n"
+            )
+            curses.doupdate()
+
     async def read_from_server(self):
         """Lue dataa palvelimelta"""
         try:
@@ -642,10 +748,7 @@ class BatClient:
                         timeout=0.1
                     )
                     if not data:
-                        self.add_output("\n*** Yhteys katkennut ***\n")
-                        self.reader = None
-                        self.writer = None
-                        self.refresh_status()
+                        self.handle_connection_lost("Yhteys katkennut")
                         continue
 
                     # Debug: näytä raakadata luettavassa muodossa
@@ -694,15 +797,13 @@ class BatClient:
                 except asyncio.TimeoutError:
                     pass
                 except (ConnectionResetError, BrokenPipeError, OSError) as e:
-                    self.add_output(f"\n*** Yhteys katkesi: {e} ***\n")
-                    self.exit_message = f"Yhteys katkesi: {e}"
-                    self.running = False
-                    break
+                    # Verkkovirhe -> pysy hengissä ja yritä yhdistää uudelleen
+                    self.handle_connection_lost(f"Yhteys katkesi: {e}")
+                    continue
                 except Exception as e:
-                    self.add_output(f"\n*** Yhteysvirhe: {e} ***\n")
-                    self.exit_message = f"Yhteysvirhe: {e}"
-                    self.running = False
-                    break
+                    # Tuntematon virhe -> katkaise, mutta älä yritä loputtomasti
+                    self.handle_connection_lost(f"Yhteysvirhe: {e}", reconnect=False)
+                    continue
         except asyncio.CancelledError:
             pass
 
@@ -1048,6 +1149,8 @@ class BatClient:
         finally:
             self.read_task.cancel()
             input_task.cancel()
+            if self.reconnect_task and not self.reconnect_task.done():
+                self.reconnect_task.cancel()
 
             if self.writer:
                 self.writer.close()

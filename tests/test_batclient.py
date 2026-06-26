@@ -153,6 +153,25 @@ class ParseAnsiTest(unittest.TestCase):
         self.assertEqual(text, "hi")
 
 
+class ResolveHostPortTest(unittest.TestCase):
+    def setUp(self):
+        self.c = make_client()
+        self.c.env = {}
+
+    def test_defaults_when_env_empty(self):
+        self.assertEqual(self.c.resolve_host_port(), (batclient.HOST, batclient.PORT))
+
+    def test_uses_env_values(self):
+        self.c.env = {"BATMUD_HOST": "example.org", "BATMUD_PORT": "2000"}
+        self.assertEqual(self.c.resolve_host_port(), ("example.org", 2000))
+
+    def test_invalid_port_falls_back(self):
+        self.c.env = {"BATMUD_HOST": "example.org", "BATMUD_PORT": "abc"}
+        host, port = self.c.resolve_host_port()
+        self.assertEqual(host, "example.org")
+        self.assertEqual(port, batclient.PORT)
+
+
 class ThemeDataTest(unittest.TestCase):
     def test_default_theme_exists(self):
         self.assertIn("default", THEMES)

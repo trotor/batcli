@@ -22,6 +22,7 @@ Yksinkertainen terminaalipohjainen MUD-client [BatMUD](https://www.bat.org)-peli
 - **Automaattinen loggaus**: Aloita loggaus automaattisesti .env:stä
 - **Käyttäjäaliakset**: Luo pikakomentoja `/alias`-komennolla
 - **Väriteemat**: Vaihda väripaletti `/theme`-komennolla (default, matrix, amber, solarized)
+- **Automaattinen uudelleenyhdistys**: Yhdistää itsestään takaisin (kasvavalla viiveellä) jos yhteys katkeaa yllättäen (poista käytöstä `AUTO_RECONNECT=false`)
 
 ## Vaatimukset
 

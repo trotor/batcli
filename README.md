@@ -24,6 +24,7 @@ A simple terminal-based MUD client for [BatMUD](https://www.bat.org) (bat.org:23
 - **Auto-logging**: Automatically start logging on connect via .env
 - **User aliases**: Create shortcuts for commands with `/alias`
 - **Color themes**: Switch the color palette with `/theme` (default, matrix, amber, solarized)
+- **Auto-reconnect**: Automatically reconnects with backoff on unexpected disconnect (disable with `AUTO_RECONNECT=false`)
 
 ## Requirements
 

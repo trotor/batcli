@@ -21,6 +21,10 @@ class ConnectCommand(Command):
         Returns:
             True jatkaakseen
         """
+        # Peruuta mahdollinen automaattinen uudelleenyhdistys
+        self.client.cancel_reconnect()
+        self.client.intentional_disconnect = False
+
         # Tarkista onko jo yhteys
         if self.client.reader is not None and self.client.writer is not None:
             self.error("Olet jo yhteydessä palvelimelle.\n")

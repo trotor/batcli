@@ -21,8 +21,16 @@ class DisconnectCommand(Command):
         Returns:
             True jatkaakseen
         """
+        # Merkitse tarkoitukselliseksi katkaisuksi -> estä auto-reconnect
+        was_reconnecting = self.client.reconnecting
+        self.client.intentional_disconnect = True
+        self.client.cancel_reconnect()
+
         if self.client.reader is None and self.client.writer is None:
-            self.info("Et ole yhteydessä palvelimelle.\n")
+            if was_reconnecting:
+                self.info("Automaattinen uudelleenyhdistys peruutettu.\n")
+            else:
+                self.info("Et ole yhteydessä palvelimelle.\n")
             return True
 
         try:
