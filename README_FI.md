@@ -13,6 +13,7 @@ Yksinkertainen terminaalipohjainen MUD-client [BatMUD](https://www.bat.org)-peli
 - Komentohistoria (Ctrl-P / Ctrl-N)
 - Rivin muokkaus kursorilla
 - Vieritys taaksepäin tulostushistoriassa
+- **Rivitys**: Pitkät rivit rivitetään ruudun leveyteen sanarajoilta, mitään ei jää näkymättömiin
 - Automaattinen kirjautuminen .env-tiedostosta
 - **Prompt hold**: MUD:n prompt (IAC GA/EOR) näkyy syöttörivillä
 - **Salasanan piilotus**: Syöte piilotetaan kun palvelin pyytää salasanaa

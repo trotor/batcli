@@ -17,7 +17,7 @@ import cmds
 # BatMUD palvelimen tiedot
 HOST = "bat.org"
 PORT = 23
-VERSION = "0.11.0"
+VERSION = "0.12.0"
 
 # Telnet protokolla konstantit
 IAC = 255   # Interpret As Command
@@ -370,6 +370,112 @@ class BatClient:
 
         return result
 
+    def wrap_segments(self, segments, width):
+        """Jaa parse_ansi():n palat näyttöriveihin, joiden leveys on enintään width.
+
+        Args:
+            segments: lista (teksti, attribuutti) -pareja
+            width: rivin maksimileveys merkkeinä
+
+        Returns:
+            Lista riveistä, joista kukin on lista (teksti, attribuutti) -pareja.
+            Tyhjä rivi palautuu tyhjänä listana, jotta se säilyy näytöllä.
+        """
+        if width < 1:
+            width = 1
+
+        # Puretaan merkeiksi: näin katkaisukohta lasketaan näytettävästä
+        # tekstistä ja attribuutit seuraavat mukana jatkoriveille.
+        chars = []
+        attrs = []
+        for text, attr in segments:
+            for ch in text:
+                if ch == '\t':
+                    # Curses levittää sarkaimen sarakkeeseen 8:n välein, joten
+                    # levitetään se jo tässä, muuten leveys lasketaan väärin
+                    pad = 8 - (len(chars) % 8)
+                    chars.extend(' ' * pad)
+                    attrs.extend([attr] * pad)
+                else:
+                    chars.append(ch)
+                    attrs.append(attr)
+
+        if not chars:
+            return [[]]
+
+        def make_row(start, end):
+            """Kokoa merkit takaisin paloiksi yhdistäen samat attribuutit"""
+            row = []
+            i = start
+            while i < end:
+                j = i
+                while j < end and attrs[j] == attrs[i]:
+                    j += 1
+                row.append((''.join(chars[i:j]), attrs[i]))
+                i = j
+            return row
+
+        rows = []
+        total = len(chars)
+        start = 0
+        while start < total:
+            end = start + width
+            if end >= total:
+                rows.append(make_row(start, total))
+                break
+
+            # Etsi sanaraja: välilyönti katkaisukohdassa tai sitä ennen
+            brk = end if chars[end] == ' ' else -1
+            if brk < 0:
+                for i in range(end - 1, start - 1, -1):
+                    if chars[i] == ' ':
+                        brk = i
+                        break
+
+            if brk <= start:
+                # Sana on riviä pidempi -> kova katkaisu
+                rows.append(make_row(start, end))
+                start = end
+            else:
+                rows.append(make_row(start, brk))
+                # Ohita katkaisukohdan välilyönnit, jotta jatkorivi alkaa sanasta
+                while brk < total and chars[brk] == ' ':
+                    brk += 1
+                start = brk
+
+        return rows
+
+    def build_display_rows(self, width, max_rows=None):
+        """Rakenna näyttörivit output_linesista uusimmasta päästä alkaen.
+
+        Args:
+            width: rivin maksimileveys merkkeinä
+            max_rows: kerätään enintään näin monta riviä lopusta (None = kaikki)
+
+        Returns:
+            Lista näyttöriveistä vanhimmasta uusimpaan.
+        """
+        rows = []
+        for line in reversed(self.output_lines):
+            rows[:0] = self.wrap_segments(self.parse_ansi(line), width)
+            if max_rows is not None and len(rows) >= max_rows:
+                break
+
+        if max_rows is not None and len(rows) > max_rows:
+            rows = rows[len(rows) - max_rows:]
+
+        return rows
+
+    def max_scroll_offset(self):
+        """Suurin sallittu scroll_offset näyttöriveinä.
+
+        Käy koko puskurin läpi, joten sopii vain kertaluontoiseen käyttöön
+        (Home). Toistuvassa vierityksessä anna refresh_output():n rajata arvo.
+        """
+        output_height = self.height - 2
+        total_rows = len(self.build_display_rows(self.width - 1))
+        return max(0, total_rows - output_height)
+
     def add_output(self, text):
         """Lisää tekstiä output-ikkunaan"""
         # Poista CR (telnet käyttää CR+LF, meille riittää LF)
@@ -403,33 +509,33 @@ class BatClient:
         self.output_win.erase()
 
         output_height = self.height - 2
-        total_lines = len(self.output_lines)
 
-        # Laske näytettävät rivit
-        start_line = max(0, total_lines - output_height - self.scroll_offset)
-        end_line = min(total_lines, start_line + output_height)
+        # Pitkät rivit wrapataan, joten haetaan näyttörivejä sen verran kuin
+        # ruudulle mahtuu plus scrollauksen verran taaksepäin
+        rows = self.build_display_rows(
+            self.width - 1,
+            max_rows=output_height + self.scroll_offset
+        )
 
-        visible_lines = list(self.output_lines)[start_line:end_line]
+        # Älä anna scrollin jäädä puskurin ulkopuolelle (esim. ikkunan koon
+        # muuttuessa tai kun rivit wrappautuvat eri tavalla)
+        max_offset = max(0, len(rows) - output_height)
+        if self.scroll_offset > max_offset:
+            self.scroll_offset = max_offset
 
-        for i, line in enumerate(visible_lines):
-            if i >= output_height:
-                break
-            try:
-                parsed = self.parse_ansi(line)
-                col = 0
-                for text, attr in parsed:
-                    if col >= self.width - 1:
-                        break
-                    # Rajoita tekstin pituus
-                    max_len = self.width - col - 1
-                    text = text[:max_len]
-                    try:
-                        self.output_win.addstr(i, col, text, attr)
-                    except curses.error:
-                        pass
-                    col += len(text)
-            except curses.error:
-                pass
+        end = len(rows) - self.scroll_offset
+        start = max(0, end - output_height)
+
+        for i, row in enumerate(rows[start:end]):
+            col = 0
+            for text, attr in row:
+                if col >= self.width - 1:
+                    break
+                try:
+                    self.output_win.addstr(i, col, text, attr)
+                except curses.error:
+                    pass
+                col += len(text)
 
         self.output_win.noutrefresh()
 
@@ -1081,10 +1187,9 @@ class BatClient:
                         self.refresh_input()
 
                     elif keycode == curses.KEY_PPAGE:  # Page Up - scroll
-                        self.scroll_offset = min(
-                            self.scroll_offset + (self.height - 3),
-                            max(0, len(self.output_lines) - (self.height - 2))
-                        )
+                        # refresh_output rajaa ylisuuren arvon, joten tässä ei
+                        # tarvitse käydä koko puskuria läpi ylärajan laskemiseksi
+                        self.scroll_offset += (self.height - 3)
                         self.refresh_output()
                         self.refresh_status()
 
@@ -1094,7 +1199,7 @@ class BatClient:
                         self.refresh_status()
 
                     elif keycode == curses.KEY_HOME:  # Home - scroll alkuun
-                        self.scroll_offset = max(0, len(self.output_lines) - (self.height - 2))
+                        self.scroll_offset = self.max_scroll_offset()
                         self.refresh_output()
                         self.refresh_status()
 
