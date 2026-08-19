@@ -15,6 +15,7 @@ A simple terminal-based MUD client for [BatMUD](https://www.bat.org) (bat.org:23
 - Command history (Ctrl-P / Ctrl-N)
 - Line editing with cursor movement
 - Scroll back through output history
+- **Line wrapping**: Long lines wrap to the screen width at word boundaries, nothing gets cut off
 - Auto-login from .env file
 - **Prompt hold**: MUD prompt (IAC GA/EOR) displayed on input line
 - **Password hiding**: Input hidden when server requests password
