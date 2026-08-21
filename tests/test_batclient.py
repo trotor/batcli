@@ -31,6 +31,7 @@ def make_client():
     c.writer = None
     c.echo_off = False
     c.user_aliases = {}
+    c.telnet_partial = b""
     return c
 
 
@@ -102,6 +103,106 @@ class HandleTelnetTest(unittest.TestCase):
         self.assertEqual(text, "")
         self.assertFalse(prompt)
 
+    def test_split_iac_ga_across_packets(self):
+        # TCP voi katkaista sekvenssin: IAC jaa edelliseen pakettiin
+        text1, prompt1 = self.c.handle_telnet("", b"hungry" + bytes([batclient.IAC]))
+        self.assertEqual(text1, "hungry")
+        self.assertFalse(prompt1)
+
+        text2, prompt2 = self.c.handle_telnet("", bytes([batclient.GA]))
+        self.assertEqual(text2, "")
+        self.assertTrue(prompt2)
+
+    def test_split_iac_will_echo_across_packets(self):
+        self.c.handle_telnet("", b"Password:" + bytes([batclient.IAC, batclient.WILL]))
+        self.c.handle_telnet("", bytes([batclient.TELOPT_ECHO]))
+        self.assertTrue(self.c.echo_off)
+
+    def test_iac_will_echo_split_into_three_packets(self):
+        self.c.handle_telnet("", bytes([batclient.IAC]))
+        self.c.handle_telnet("", bytes([batclient.WILL]))
+        self.c.handle_telnet("", bytes([batclient.TELOPT_ECHO]))
+        self.assertTrue(self.c.echo_off)
+
+    def test_incomplete_subnegotiation_is_buffered(self):
+        text1, _ = self.c.handle_telnet("", b"hi" + bytes([batclient.IAC, batclient.SB, 201]))
+        self.assertEqual(text1, "hi")
+
+        text2, _ = self.c.handle_telnet(
+            "", bytes([1, 2, 3, batclient.IAC, batclient.SE]) + b"there")
+        self.assertEqual(text2, "there")
+
+    def test_runaway_subnegotiation_does_not_swallow_output(self):
+        # Paattymaton SB ei saa niella loputtomasti tulostetta
+        self.c.handle_telnet("", bytes([batclient.IAC, batclient.SB]) + b"x" * (batclient.TELNET_PARTIAL_MAX + 1))
+        text, _ = self.c.handle_telnet("", b"nakyy viela")
+        self.assertEqual(text, "nakyy viela")
+
+
+
+class FakeWriter:
+    """Korvaa asyncio StreamWriterin: kerää lähetetyn datan."""
+
+    def __init__(self):
+        self.sent = []
+        self.closed = False
+
+    def write(self, data):
+        self.sent.append(data)
+
+    async def drain(self):
+        pass
+
+    def close(self):
+        self.closed = True
+
+
+
+class CloseConnectionTest(unittest.TestCase):
+    def setUp(self):
+        self.c = make_client()
+
+    def test_clears_reader_and_writer(self):
+        self.c.writer = FakeWriter()
+        self.c.reader = object()
+        self.c.close_connection()
+        self.assertIsNone(self.c.reader)
+        self.assertIsNone(self.c.writer)
+
+    def test_closes_the_writer(self):
+        writer = FakeWriter()
+        self.c.writer = writer
+        self.c.reader = object()
+        self.c.close_connection()
+        self.assertTrue(writer.closed)
+
+    def test_safe_when_already_disconnected(self):
+        self.c.writer = None
+        self.c.reader = None
+        self.c.close_connection()
+        self.assertIsNone(self.c.reader)
+
+class SendCommandTest(unittest.IsolatedAsyncioTestCase):
+    def setUp(self):
+        self.c = make_client()
+        self.c.writer = FakeWriter()
+        self.c.reader = object()
+        self.c.command_history = deque(maxlen=100)
+        self.c.history_index = -1
+
+    async def test_normal_command_goes_to_history(self):
+        await self.c.send_command("kill rat")
+        self.assertEqual(list(self.c.command_history), ["kill rat"])
+
+    async def test_password_never_enters_history(self):
+        # Ei saa nojata echo_off:iin: auto_login tietaa itse lahettavansa salasanan
+        self.c.echo_off = False
+        await self.c.send_command("hunter2", is_password=True)
+        self.assertEqual(list(self.c.command_history), [])
+
+    async def test_password_is_still_sent_to_server(self):
+        await self.c.send_command("hunter2", is_password=True)
+        self.assertEqual(self.c.writer.sent, [b"hunter2\n"])
 
 class ExpandAliasTest(unittest.TestCase):
     def setUp(self):
@@ -304,6 +405,62 @@ class BuildDisplayRowsTest(unittest.TestCase):
         self.assertEqual(len(rows), 1)
 
 
+
+def make_screen_client():
+    """BatClient jolla on valeikkunat, jotta tulostuslogiikkaa voi ajaa."""
+    c = make_client()
+    c.height, c.width = 12, 46
+    c.scroll_offset = 0
+    c.output_lines = deque(maxlen=10000)
+    c.partial_line = ""
+    c.mud_prompt = ""
+    c.input_buffer = ""
+    c.cursor_pos = 0
+    c.log_file = None
+    c.output_win = FakeWindow()
+    c.input_win = FakeWindow()
+    return c
+
+
+class ProcessServerTextTest(unittest.TestCase):
+    def setUp(self):
+        self.c = make_screen_client()
+
+    def test_complete_lines_are_printed(self):
+        self.c.process_server_text("eka\ntoka\n", False)
+        self.assertEqual(list(self.c.output_lines), ["eka", "toka"])
+        self.assertEqual(self.c.partial_line, "")
+
+    def test_incomplete_line_is_held_not_printed(self):
+        # Tama on se vika: kesken jaanytta rivia ei saa tulostaa omana rivinaan
+        self.c.process_server_text("Welcome to BatMUD! Please enter your ", False)
+        self.assertEqual(list(self.c.output_lines), [])
+        self.assertEqual(self.c.partial_line, "Welcome to BatMUD! Please enter your ")
+
+    def test_held_line_joins_the_next_packet(self):
+        self.c.process_server_text("Welcome to BatMUD! Please enter your ", False)
+        self.c.process_server_text("name at the prompt below.\n", False)
+        self.assertEqual(
+            list(self.c.output_lines),
+            ["Welcome to BatMUD! Please enter your name at the prompt below."])
+
+    def test_prompt_goes_to_input_line_not_output(self):
+        self.c.process_server_text("hp:100 sp:50 > ", True)
+        self.assertEqual(self.c.mud_prompt, "hp:100 sp:50 > ")
+        self.assertEqual(list(self.c.output_lines), [])
+
+    def test_line_before_prompt_is_printed(self):
+        self.c.process_server_text("You are hungry.\nhp:100 sp:50 > ", True)
+        self.assertEqual(list(self.c.output_lines), ["You are hungry."])
+        self.assertEqual(self.c.mud_prompt, "hp:100 sp:50 > ")
+
+    def test_held_line_completes_into_a_prompt(self):
+        # Rivi katkeaa pakettirajalle ja IAC GA tulee vasta seuraavassa
+        self.c.process_server_text("hp:100 ", False)
+        self.c.process_server_text("sp:50 > ", True)
+        self.assertEqual(self.c.mud_prompt, "hp:100 sp:50 > ")
+        self.assertEqual(list(self.c.output_lines), [])
+
 class MaxScrollOffsetTest(unittest.TestCase):
     def setUp(self):
         self.c = make_client()
@@ -332,6 +489,15 @@ class FakeWindow:
         self.cells.setdefault(y, []).append((x, text))
 
     def noutrefresh(self):
+        pass
+
+    def move(self, y, x):
+        pass
+
+    def touchwin(self):
+        pass
+
+    def refresh(self):
         pass
 
     def drawn(self):

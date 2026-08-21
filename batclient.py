@@ -17,7 +17,7 @@ import cmds
 # BatMUD palvelimen tiedot
 HOST = "bat.org"
 PORT = 23
-VERSION = "0.12.0"
+VERSION = "0.12.1"
 
 # Telnet protokolla konstantit
 IAC = 255   # Interpret As Command
@@ -31,6 +31,10 @@ DO = 253
 DONT = 254
 TELOPT_EOR = 25  # End of Record option
 TELOPT_ECHO = 1  # Echo option
+
+# Kuinka pitkän keskeneräisen IAC-sekvenssin puskuroimme pakettirajan yli.
+# Tätä pidempi ei ole kelvollista telnet-dataa, joten se tulkitaan tekstiksi.
+TELNET_PARTIAL_MAX = 4096
 
 
 # Telnet-komentojen nimet debug-tulostukseen
@@ -182,6 +186,7 @@ class BatClient:
         self.history_index = -1
         self.mud_prompt = ""  # MUD:n lähettämä prompt (IAC GA/EOR jälkeen)
         self.partial_line = ""  # Keskeneräinen rivi (ei vielä \n tai IAC GA/EOR)
+        self.telnet_partial = b""  # Pakettirajalle katkennut IAC-sekvenssi
         self.debug_mode = False  # Debug-tila näyttää raakadatan
         self.version = VERSION  # Versio helppiä varten
         self.log_file = None  # Lokitiedosto (avattu file handle)
@@ -637,6 +642,16 @@ class BatClient:
             port = PORT
         return host, port
 
+    def close_connection(self):
+        """Sulje mahdollinen yhteys ja nollaa yhteystila."""
+        if self.writer:
+            try:
+                self.writer.close()
+            except Exception:
+                pass
+        self.reader = None
+        self.writer = None
+
     async def connect(self):
         """Yhdistä BatMUD-palvelimeen"""
         host, port = self.resolve_host_port()
@@ -658,6 +673,7 @@ class BatClient:
                     timeout=15.0
                 )
                 if not first_data:
+                    self.close_connection()
                     self.add_output("*** Palvelin sulki yhteyden - BatMUD saattaa olla alhaalla ***\n")
                     return False
 
@@ -671,34 +687,29 @@ class BatClient:
                     self.add_output(f"[DEBUG] {debug_str}\n")
 
                 text, prompt_detected = self.handle_telnet("", first_data)
-                if text:
-                    self.add_output(text)
-                if prompt_detected:
-                    last_newline = text.rfind('\n')
-                    if last_newline >= 0:
-                        self.mud_prompt = text[last_newline + 1:]
-                    else:
-                        self.mud_prompt = text
-                    self.refresh_input()
+                self.process_server_text(text, prompt_detected)
 
                 return True
 
             except asyncio.TimeoutError:
+                self.close_connection()
                 self.add_output("*** Palvelin ei vastaa - BatMUD saattaa olla alhaalla ***\n")
-                if self.writer:
-                    self.writer.close()
                 return False
 
         except asyncio.TimeoutError:
+            self.close_connection()
             self.add_output("*** Yhteysaikakatkaisu - palvelimeen ei saatu yhteyttä ***\n")
             return False
         except ConnectionRefusedError:
+            self.close_connection()
             self.add_output("*** Yhteys evätty - palvelin ei hyväksy yhteyksiä ***\n")
             return False
         except OSError as e:
+            self.close_connection()
             self.add_output(f"*** Verkkovirhe: {e} ***\n")
             return False
         except Exception as e:
+            self.close_connection()
             self.add_output(f"*** Yhteysvirhe: {e} ***\n")
             return False
 
@@ -744,7 +755,7 @@ class BatClient:
             await asyncio.sleep(1.0)
             await self.send_command(self.username)
             await asyncio.sleep(0.5)
-            await self.send_command(self.password)
+            await self.send_command(self.password, is_password=True)
         elif self.username:
             await asyncio.sleep(1.0)
             await self.send_command(self.username)
@@ -775,6 +786,7 @@ class BatClient:
 
         self.add_output(f"\n*** {reason} ***\n")
         self.refresh_status()
+        curses.doupdate()
 
         if (reconnect and self.auto_reconnect and not self.reconnecting
                 and self.running):
@@ -839,6 +851,45 @@ class BatClient:
             )
             curses.doupdate()
 
+    def process_server_text(self, text, prompt_detected):
+        """Käsittele palvelimelta tullut teksti.
+
+        Tulostaa valmiit rivit, pitää keskeneräisen rivin tallessa seuraavaa
+        pakettia varten ja poimii promptin syöteriville. Sekä connect() että
+        read_from_server() käyttävät tätä, jotta polut eivät ajaudu erilleen.
+
+        Args:
+            text: Telnet-komennoista puhdistettu teksti
+            prompt_detected: Tuliko datan mukana IAC GA/EOR
+        """
+        # Yhdistä edellinen keskeneräinen rivi
+        text = self.partial_line + text
+        self.partial_line = ""
+
+        if prompt_detected:
+            # Etsi viimeinen rivinvaihto - sen jälkeinen teksti on prompt
+            last_newline = text.rfind('\n')
+            if last_newline >= 0:
+                # Tulosta kaikki ennen promptia
+                self.add_output(text[:last_newline + 1])
+                # Tallenna prompt
+                self.mud_prompt = text[last_newline + 1:]
+            else:
+                # Ei rivinvaihtoja - koko teksti on prompt
+                self.mud_prompt = text
+            self.refresh_input()
+        else:
+            # Tarkista onko keskeneräinen rivi (ei pääty \n)
+            if text and not text.endswith('\n'):
+                last_newline = text.rfind('\n')
+                if last_newline >= 0:
+                    self.add_output(text[:last_newline + 1])
+                    self.partial_line = text[last_newline + 1:]
+                else:
+                    self.partial_line = text
+            else:
+                self.add_output(text)
+
     async def read_from_server(self):
         """Lue dataa palvelimelta"""
         try:
@@ -869,33 +920,7 @@ class BatClient:
                     if self.debug_mode and prompt_detected:
                         self.add_output(f"[DEBUG] >>> PROMPT DETECTED <<<\n")
 
-                    # Yhdistä edellinen keskeneräinen rivi
-                    text = self.partial_line + text
-                    self.partial_line = ""
-
-                    if prompt_detected:
-                        # Etsi viimeinen rivinvaihto - sen jälkeinen teksti on prompt
-                        last_newline = text.rfind('\n')
-                        if last_newline >= 0:
-                            # Tulosta kaikki ennen promptia
-                            self.add_output(text[:last_newline + 1])
-                            # Tallenna prompt
-                            self.mud_prompt = text[last_newline + 1:]
-                        else:
-                            # Ei rivinvaihtoja - koko teksti on prompt
-                            self.mud_prompt = text
-                        self.refresh_input()
-                    else:
-                        # Tarkista onko keskeneräinen rivi (ei pääty \n)
-                        if text and not text.endswith('\n'):
-                            last_newline = text.rfind('\n')
-                            if last_newline >= 0:
-                                self.add_output(text[:last_newline + 1])
-                                self.partial_line = text[last_newline + 1:]
-                            else:
-                                self.partial_line = text
-                        else:
-                            self.add_output(text)
+                    self.process_server_text(text, prompt_detected)
 
                     self.refresh_status()
                     curses.doupdate()
@@ -918,10 +943,18 @@ class BatClient:
         result = []
         prompt_detected = False
         i = 0
-        data = list(raw_data)
+        # Edellisen paketin lopusta jäänyt keskeneräinen sekvenssi jatkuu tästä
+        data = list(self.telnet_partial) + list(raw_data)
+        self.telnet_partial = b""
+        pending = None  # Tämän paketin lopusta jäävä keskeneräinen sekvenssi
 
         while i < len(data):
-            if data[i] == IAC and i + 1 < len(data):
+            if data[i] == IAC:
+                if i + 1 >= len(data):
+                    # Pelkkä IAC paketin lopussa - loput tulee seuraavassa
+                    pending = data[i:]
+                    break
+
                 next_byte = data[i + 1]
 
                 if next_byte == IAC:  # Escaped IAC
@@ -936,7 +969,12 @@ class BatClient:
                     prompt_detected = True
                     i += 2
 
-                elif next_byte in (WILL, WONT, DO, DONT) and i + 2 < len(data):
+                elif next_byte in (WILL, WONT, DO, DONT):
+                    if i + 2 >= len(data):
+                        # Optiotavu tulee vasta seuraavassa paketissa
+                        pending = data[i:]
+                        break
+
                     cmd = next_byte
                     opt = data[i + 2]
 
@@ -976,18 +1014,32 @@ class BatClient:
 
                 elif next_byte == SB:  # Subnegotiation - ohita
                     # Etsi SE
+                    end = -1
                     j = i + 2
                     while j < len(data) - 1:
                         if data[j] == IAC and data[j + 1] == SE:
+                            end = j + 2
                             break
                         j += 1
-                    i = j + 2
+                    if end < 0:
+                        # Ei päättynyt tässä paketissa
+                        pending = data[i:]
+                        break
+                    i = end
 
                 else:
                     i += 2
             else:
                 result.append(data[i])
                 i += 1
+
+        if pending is not None:
+            if len(pending) <= TELNET_PARTIAL_MAX:
+                self.telnet_partial = bytes(pending)
+            else:
+                # Näin pitkä keskeneräinen sekvenssi ei ole kelvollista
+                # telnet-dataa - tulkitse tekstiksi jottei tuloste katoa
+                result.extend(pending)
 
         return bytes(result).decode('iso-8859-1', errors='replace'), prompt_detected
 
@@ -1029,8 +1081,15 @@ class BatClient:
         self.refresh_output()
         return True
 
-    async def send_command(self, cmd):
-        """Lähetä komento palvelimelle"""
+    async def send_command(self, cmd, is_password=False):
+        """Lähetä komento palvelimelle.
+
+        Args:
+            cmd: Lähetettävä komento
+            is_password: True kun kutsuja tietää lähettävänsä salasanan.
+                Silloin komentoa ei talleteta historiaan riippumatta siitä
+                onko palvelin ehtinyt neuvotella ECHO-option päälle.
+        """
         if self.writer is None or self.reader is None:
             self.add_output("\n*** Ei yhteyttä palvelimelle - käytä /connect ***\n")
             return
@@ -1039,8 +1098,8 @@ class BatClient:
             self.writer.write((cmd + "\n").encode('iso-8859-1'))
             await self.writer.drain()
 
-            # Lisää komento historiaan (ei salasanaa - echo_off-tilassa)
-            if cmd.strip() and not self.echo_off:
+            # Lisää komento historiaan (ei salasanoja)
+            if cmd.strip() and not self.echo_off and not is_password:
                 self.command_history.append(cmd)
                 self.history_index = -1
         except Exception as e:
@@ -1242,6 +1301,9 @@ class BatClient:
             self.add_output("\n")
             self.add_output("*** Alkuyhteys epäonnistui ***\n")
             self.add_output("Voit yhdistää palvelimelle komennolla /connect\n")
+
+        # Piirrä heti - muuten viestit näkyisivät vasta seuraavan näppäimen jälkeen
+        curses.doupdate()
 
         # Käynnistä tehtävät (pyörivät vaikka ei yhteyttä)
         self.read_task = asyncio.create_task(self.read_from_server())
